@@ -640,7 +640,7 @@ func cmdDaemonInstall() {
 	logFile := filepath.Join(root, "daemon.log")
 	configDirs := installConfigDirPaths()
 
-	plist := buildPlist(daemonBin, root, logFile, configDirs)
+	plist := buildPlist(daemonBin, root, logFile, configDirs, os.Getenv("PATH"))
 
 	plistPath := launchAgentPlistPath()
 	if err := os.MkdirAll(filepath.Dir(plistPath), 0o755); err != nil {
@@ -707,7 +707,9 @@ func installConfigDirPaths() []string {
 }
 
 // buildPlist generates the LaunchAgent plist XML.
-func buildPlist(daemonBin, rootDir, logFile string, configDirs []string) string {
+// envPath is embedded as EnvironmentVariables.PATH so the daemon inherits the
+// user's full shell PATH (launchd provides only a minimal default PATH).
+func buildPlist(daemonBin, rootDir, logFile string, configDirs []string, envPath string) string {
 	var args strings.Builder
 	args.WriteString(fmt.Sprintf("\t\t<string>%s</string>\n", xmlEscape(daemonBin)))
 	args.WriteString(fmt.Sprintf("\t\t<string>--root</string>\n\t\t<string>%s</string>\n", xmlEscape(rootDir)))
@@ -724,6 +726,11 @@ func buildPlist(daemonBin, rootDir, logFile string, configDirs []string) string 
 	<key>ProgramArguments</key>
 	<array>
 %s	</array>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>%s</string>
+	</dict>
 	<key>RunAtLoad</key>
 	<true/>
 	<key>KeepAlive</key>
@@ -737,7 +744,7 @@ func buildPlist(daemonBin, rootDir, logFile string, configDirs []string) string 
 	<string>%s</string>
 </dict>
 </plist>
-`, xmlEscape(launchAgentLabel), args.String(), xmlEscape(logFile), xmlEscape(logFile))
+`, xmlEscape(launchAgentLabel), args.String(), xmlEscape(envPath), xmlEscape(logFile), xmlEscape(logFile))
 }
 
 func xmlEscape(s string) string {

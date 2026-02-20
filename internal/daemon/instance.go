@@ -57,24 +57,35 @@ type Instance struct {
 	LogFile     string // path to the on-disk log file
 
 	// Mutable; protected by mu.
-	mu           sync.Mutex
-	state        string
-	pid          int
-	ptm          *os.File   // PTY master; nil after process exits
-	logBuf       []byte     // rolling in-memory copy of recent output
-	attachedConn net.Conn   // non-nil while a client is attached
-	attachDone   chan struct{} // closed when the current attach session ends
+	mu             sync.Mutex
+	state          string
+	pid            int
+	ptm            *os.File     // PTY master; nil after process exits
+	logBuf         []byte       // rolling in-memory copy of recent output
+	lastOutputTime time.Time    // last time the PTY produced output
+	attachedConn   net.Conn     // non-nil while a client is attached
+	attachDone     chan struct{} // closed when the current attach session ends
 }
 
 // Info returns a serialisable snapshot of this instance's metadata.
 func (inst *Instance) Info() proto.InstanceInfo {
 	inst.mu.Lock()
 	defer inst.mu.Unlock()
+
+	state := inst.state
+	// Promote RUNNING → WAITING when no PTY output has been seen for 2 seconds.
+	// Claude streams output continuously while working; silence means it is
+	// waiting for human input.
+	if state == proto.StateRunning && !inst.lastOutputTime.IsZero() &&
+		time.Since(inst.lastOutputTime) > 2*time.Second {
+		state = proto.StateWaiting
+	}
+
 	return proto.InstanceInfo{
 		ID:          inst.ID,
 		Project:     inst.Project,
 		Task:        inst.Task,
-		State:       inst.state,
+		State:       state,
 		Branch:      inst.Branch,
 		WorktreeDir: inst.WorktreeDir,
 		CreatedAt:   inst.CreatedAt.Unix(),
@@ -100,8 +111,11 @@ func (inst *Instance) startAgent(agentCmd string, agentArgs []string) error {
 	cmd.Dir = inst.WorktreeDir
 	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
 
-	// Place the agent in its own process group so we can kill everything at once.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	// pty.Start sets Setsid:true on the child, which creates a new session and
+	// process group (PGID = child PID).  Do NOT also set Setpgid here: calling
+	// setpgid() after setsid() on the session leader returns EPERM on macOS,
+	// which propagates back as "fork/exec: operation not permitted".
+	// The new session group already gives us kill(-pid, SIGKILL) semantics.
 
 	// Start the command attached to a new PTY.
 	ptm, err := pty.Start(cmd)
@@ -156,6 +170,7 @@ func (inst *Instance) ptyReader(cmd *exec.Cmd) {
 			if len(inst.logBuf) > maxLogBytes {
 				inst.logBuf = inst.logBuf[len(inst.logBuf)-maxLogBytes:]
 			}
+			inst.lastOutputTime = time.Now()
 			conn := inst.attachedConn
 			inst.mu.Unlock()
 
