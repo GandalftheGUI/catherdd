@@ -1,0 +1,11 @@
+name: repmentor
+repo: https://github.com/GandalftheGUI/coach 
+
+bootstrap: []
+
+agent:
+  command: claude
+  args: []
+
+dev:
+  start: []

@@ -31,18 +31,15 @@ import (
 // Daemon is the central supervisor.  It owns a map of live instances and
 // handles all IPC requests from grove.
 type Daemon struct {
-	rootDir    string   // ~/.grove  (runtime data root)
-	configDirs []string // ordered list of directories to search for project YAMLs
+	rootDir string // ~/.grove  (data root: projects, instances, logs)
 
 	mu        sync.Mutex
 	instances map[string]*Instance // keyed by instance ID
 }
 
 // New creates a Daemon that uses rootDir (~/.grove) as its data directory.
-// configDirs is the ordered list of directories to search for project.yaml
-// files (personal first, then global, then fallback).  If empty, the daemon
-// falls back to rootDir/projects/ for backward compatibility.
-func New(rootDir string, configDirs []string) (*Daemon, error) {
+// Project registrations are read from rootDir/projects/<name>/project.yaml.
+func New(rootDir string) (*Daemon, error) {
 	for _, sub := range []string{
 		"projects",
 		"instances",
@@ -54,9 +51,8 @@ func New(rootDir string, configDirs []string) (*Daemon, error) {
 	}
 
 	d := &Daemon{
-		rootDir:    rootDir,
-		configDirs: configDirs,
-		instances:  make(map[string]*Instance),
+		rootDir:   rootDir,
+		instances: make(map[string]*Instance),
 	}
 
 	if err := d.loadPersistedInstances(); err != nil {
@@ -162,7 +158,7 @@ func (d *Daemon) handleStart(conn net.Conn, req proto.Request) {
 		return
 	}
 
-	p, err := loadProject(d.configDirs, d.rootDir, req.Project)
+	p, err := loadProject(d.rootDir, req.Project)
 	if err != nil {
 		respond(conn, proto.Response{OK: false, Error: err.Error()})
 		return
@@ -454,7 +450,7 @@ func (d *Daemon) handleFinish(conn net.Conn, req proto.Request) {
 	// Send ACK — instance is now FINISHED regardless of what complete commands do.
 	respond(conn, proto.Response{OK: true, WorktreeDir: worktreeDir, Branch: branch})
 
-	p, err := loadProject(d.configDirs, d.rootDir, projectName)
+	p, err := loadProject(d.rootDir, projectName)
 	if err != nil {
 		fmt.Fprintf(conn, "warning: could not load project to run complete commands: %v\n", err)
 		return
@@ -506,7 +502,7 @@ func (d *Daemon) handleRestart(conn net.Conn, req proto.Request) {
 		return
 	}
 
-	p, err := loadProject(d.configDirs, d.rootDir, inst.Project)
+	p, err := loadProject(d.rootDir, inst.Project)
 	if err != nil {
 		respond(conn, proto.Response{OK: false, Error: err.Error()})
 		return

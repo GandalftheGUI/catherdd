@@ -82,8 +82,8 @@ func usage() {
 	fmt.Fprintln(os.Stderr, `grove – supervise AI coding agent instances
 
 Project commands:
-  project create <name> [--global] [--repo <url>] [--agent <cmd>]
-                           Define a new project (personal by default, --global for shared)
+  project create <name> [--repo <url>] [--agent <cmd>]
+                           Define a new project
   project list             List defined projects
   main <project>           Print the main checkout path for a project
 
@@ -124,53 +124,31 @@ func cmdProject() {
 	}
 }
 
-// cmdProjectCreate handles: grove project create <name> [--global] [--repo <url>] [--agent <cmd>]
+// cmdProjectCreate handles: grove project create <name> [--repo <url>] [--agent <cmd>]
 //
-// By default the project.yaml is written to projects.local/<name>/ (personal,
-// git-ignored).  Pass --global to write to projects/<name>/ instead (tracked).
+// Writes the project registration to ~/.grove/projects/<name>/project.yaml.
 // This is a pure filesystem operation — no daemon required.
 func cmdProjectCreate() {
 	if len(os.Args) < 4 || os.Args[3] == "" || os.Args[3][0] == '-' {
-		fmt.Fprintln(os.Stderr, "usage: grove project create <name> [--global] [--repo <url>] [--agent <cmd>]")
+		fmt.Fprintln(os.Stderr, "usage: grove project create <name> [--repo <url>] [--agent <cmd>]")
 		os.Exit(1)
 	}
 	name := os.Args[3]
 
 	fs := flag.NewFlagSet("project create", flag.ExitOnError)
-	global := fs.Bool("global", false, "write to the repo's global projects/ directory (tracked by git)")
 	repo := fs.String("repo", "", "git remote URL (can be added later)")
 	agent := fs.String("agent", "claude", "agent command to run inside the worktree")
 	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: grove project create <name> [--global] [--repo <url>] [--agent <cmd>]")
+		fmt.Fprintln(os.Stderr, "usage: grove project create <name> [--repo <url>] [--agent <cmd>]")
 		fs.PrintDefaults()
 	}
 	fs.Parse(os.Args[4:])
 
-	// Determine which config directory to write into.
-	var targetDir string
-	root := repoRoot()
-	if *global {
-		if root != "" {
-			targetDir = filepath.Join(root, "projects")
-		}
-	} else {
-		// Personal: projects.local/ next to the binary's repo root.
-		if root != "" {
-			targetDir = filepath.Join(root, "projects.local")
-		}
-	}
-	// Fall back to ~/.grove/projects/ if we can't find the repo root
-	// (e.g., grove installed system-wide).
-	if targetDir == "" {
-		targetDir = filepath.Join(rootDir(), "projects")
-	}
-
-	projectDir := filepath.Join(targetDir, name)
-	if _, err := os.Stat(projectDir); err == nil {
+	projectDir := filepath.Join(rootDir(), "projects", name)
+	if _, err := os.Stat(filepath.Join(projectDir, "project.yaml")); err == nil {
 		fmt.Fprintf(os.Stderr, "grove: project %q already exists at %s\n", name, projectDir)
 		os.Exit(1)
 	}
-	// MkdirAll creates projects.local/ automatically if it doesn't exist yet.
 	if err := os.MkdirAll(projectDir, 0o755); err != nil {
 		fmt.Fprintf(os.Stderr, "grove: %v\n", err)
 		os.Exit(1)
@@ -192,57 +170,50 @@ func cmdProjectCreate() {
 
 // cmdProjectList handles: grove project list
 //
-// Scans all config directories (personal → global → home) and prints a summary
-// table.  Projects with the same name in multiple dirs are deduplicated (the
-// highest-priority dir wins).  This is a pure filesystem operation — no daemon
-// required.
+// Scans ~/.grove/projects/ and prints a summary table.
+// This is a pure filesystem operation — no daemon required.
 func cmdProjectList() {
-	type row struct{ name, source, repo, agent string }
+	type row struct{ name, repo, agent string }
 	var rows []row
-	seen := make(map[string]bool)
 
-	for _, entry := range allConfigDirEntries() {
-		dirEntries, err := os.ReadDir(entry.path)
+	projectsDir := filepath.Join(rootDir(), "projects")
+	dirEntries, err := os.ReadDir(projectsDir)
+	if err != nil {
+		fmt.Println("no projects defined")
+		return
+	}
+
+	for _, e := range dirEntries {
+		if !e.IsDir() {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(projectsDir, e.Name(), "project.yaml"))
 		if err != nil {
-			continue // dir may not exist yet
+			continue
 		}
-		for _, e := range dirEntries {
-			if !e.IsDir() || seen[e.Name()] {
-				continue
-			}
-			data, err := os.ReadFile(filepath.Join(entry.path, e.Name(), "project.yaml"))
-			if err != nil {
-				continue
-			}
-			var p struct {
-				Name  string `yaml:"name"`
-				Repo  string `yaml:"repo"`
-				Agent struct {
-					Command string `yaml:"command"`
-				} `yaml:"agent"`
-			}
-			if err := yaml.Unmarshal(data, &p); err != nil {
-				continue
-			}
-			name := p.Name
-			if name == "" {
-				name = e.Name()
-			}
-			repo := p.Repo
-			if repo == "" {
-				repo = "(no repo)"
-			}
-			agent := p.Agent.Command
-			if agent == "" {
-				agent = "(none)"
-			}
-			source := entry.label
-			if source == "" {
-				source = "home"
-			}
-			seen[e.Name()] = true
-			rows = append(rows, row{name, source, repo, agent})
+		var p struct {
+			Name  string `yaml:"name"`
+			Repo  string `yaml:"repo"`
+			Agent struct {
+				Command string `yaml:"command"`
+			} `yaml:"agent"`
 		}
+		if err := yaml.Unmarshal(data, &p); err != nil {
+			continue
+		}
+		name := p.Name
+		if name == "" {
+			name = e.Name()
+		}
+		repo := p.Repo
+		if repo == "" {
+			repo = "(no repo)"
+		}
+		agent := p.Agent.Command
+		if agent == "" {
+			agent = "(none)"
+		}
+		rows = append(rows, row{name, repo, agent})
 	}
 
 	if len(rows) == 0 {
@@ -250,10 +221,10 @@ func cmdProjectList() {
 		return
 	}
 
-	fmt.Printf("%-20s  %-10s  %-40s  %s\n", "NAME", "SOURCE", "REPO", "AGENT")
-	fmt.Printf("%-20s  %-10s  %-40s  %s\n", "--------------------", "----------", "----------------------------------------", "-----")
+	fmt.Printf("%-20s  %-40s  %s\n", "NAME", "REPO", "AGENT")
+	fmt.Printf("%-20s  %-40s  %s\n", "--------------------", "----------------------------------------", "-----")
 	for _, r := range rows {
-		fmt.Printf("%-20s  %-10s  %-40s  %s\n", r.name, r.source, r.repo, r.agent)
+		fmt.Printf("%-20s  %-40s  %s\n", r.name, r.repo, r.agent)
 	}
 }
 
@@ -987,9 +958,8 @@ func cmdDaemonInstall() {
 
 	root := rootDir()
 	logFile := filepath.Join(root, "daemon.log")
-	configDirs := installConfigDirPaths()
 
-	plist := buildPlist(daemonBin, root, logFile, configDirs, os.Getenv("PATH"))
+	plist := buildPlist(daemonBin, root, logFile, os.Getenv("PATH"))
 
 	plistPath := launchAgentPlistPath()
 	if err := os.MkdirAll(filepath.Dir(plistPath), 0o755); err != nil {
@@ -1041,31 +1011,10 @@ func cmdDaemonStatus() {
 	}
 }
 
-// installConfigDirPaths returns the project config dirs to pass to the daemon
-// plist. Always includes projects.local/ and projects/ relative to the repo
-// root, even if they don't exist yet (the daemon handles missing dirs).
-func installConfigDirPaths() []string {
-	root := repoRoot()
-	if root == "" {
-		return nil
-	}
-	return []string{
-		filepath.Join(root, "projects.local"),
-		filepath.Join(root, "projects"),
-	}
-}
-
 // buildPlist generates the LaunchAgent plist XML.
 // envPath is embedded as EnvironmentVariables.PATH so the daemon inherits the
 // user's full shell PATH (launchd provides only a minimal default PATH).
-func buildPlist(daemonBin, rootDir, logFile string, configDirs []string, envPath string) string {
-	var args strings.Builder
-	args.WriteString(fmt.Sprintf("\t\t<string>%s</string>\n", xmlEscape(daemonBin)))
-	args.WriteString(fmt.Sprintf("\t\t<string>--root</string>\n\t\t<string>%s</string>\n", xmlEscape(rootDir)))
-	for _, dir := range configDirs {
-		args.WriteString(fmt.Sprintf("\t\t<string>--projects-dir</string>\n\t\t<string>%s</string>\n", xmlEscape(dir)))
-	}
-
+func buildPlist(daemonBin, rootDir, logFile string, envPath string) string {
 	return fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -1074,7 +1023,10 @@ func buildPlist(daemonBin, rootDir, logFile string, configDirs []string, envPath
 	<string>%s</string>
 	<key>ProgramArguments</key>
 	<array>
-%s	</array>
+		<string>%s</string>
+		<string>--root</string>
+		<string>%s</string>
+	</array>
 	<key>EnvironmentVariables</key>
 	<dict>
 		<key>PATH</key>
@@ -1093,7 +1045,8 @@ func buildPlist(daemonBin, rootDir, logFile string, configDirs []string, envPath
 	<string>%s</string>
 </dict>
 </plist>
-`, xmlEscape(launchAgentLabel), args.String(), xmlEscape(envPath), xmlEscape(logFile), xmlEscape(logFile))
+`, xmlEscape(launchAgentLabel), xmlEscape(daemonBin), xmlEscape(rootDir),
+		xmlEscape(envPath), xmlEscape(logFile), xmlEscape(logFile))
 }
 
 func xmlEscape(s string) string {
@@ -1101,68 +1054,6 @@ func xmlEscape(s string) string {
 	s = strings.ReplaceAll(s, "<", "&lt;")
 	s = strings.ReplaceAll(s, ">", "&gt;")
 	return s
-}
-
-// ─── Project directory helpers ────────────────────────────────────────────────
-
-// repoRoot returns the directory one level above the grove binary, which is
-// the repo root when running from a local checkout (bin/grove → repo/).
-// Returns an empty string if the executable path cannot be determined.
-func repoRoot() string {
-	exe, err := os.Executable()
-	if err != nil {
-		return ""
-	}
-	return filepath.Dir(filepath.Dir(exe))
-}
-
-// repoProjDirs returns the personal (projects.local/) and global (projects/)
-// config directories relative to the repo root, if they exist on disk.
-// Either value may be empty.
-func repoProjDirs() (personal, global string) {
-	root := repoRoot()
-	if root == "" {
-		return "", ""
-	}
-	g := filepath.Join(root, "projects")
-	if fi, err := os.Stat(g); err == nil && fi.IsDir() {
-		global = g
-	}
-	p := filepath.Join(root, "projects.local")
-	if fi, err := os.Stat(p); err == nil && fi.IsDir() {
-		personal = p
-	}
-	return
-}
-
-// configDirEntry pairs a filesystem path with a human-readable label.
-type configDirEntry struct {
-	path  string
-	label string // "personal", "global", or "" for the ~/.grove fallback
-}
-
-// allConfigDirEntries returns every project config directory in priority order:
-// personal repo dir → global repo dir → ~/.grove/projects fallback.
-func allConfigDirEntries() []configDirEntry {
-	personal, global := repoProjDirs()
-	var entries []configDirEntry
-	if personal != "" {
-		entries = append(entries, configDirEntry{personal, "personal"})
-	}
-	if global != "" {
-		entries = append(entries, configDirEntry{global, "global"})
-	}
-	return entries
-}
-
-// configDirPaths returns just the paths from allConfigDirEntries.
-func configDirPaths() []string {
-	entries := allConfigDirEntries()
-	paths := make([]string, len(entries))
-	for i, e := range entries {
-		paths[i] = e.path
-	}
-	return paths
 }
 
 // ─── Daemon connection helpers ────────────────────────────────────────────────
@@ -1197,24 +1088,13 @@ func ensureDaemon(root, socketPath string) {
 		return
 	}
 
-	// Find the groved binary next to the current executable.
 	exe, _ := os.Executable()
 	daemonBin := filepath.Join(filepath.Dir(exe), "groved")
 	if _, err := os.Stat(daemonBin); err != nil {
-		// Fall back to PATH.
 		daemonBin = "groved"
 	}
 
-	// Build argument list: --root <dir> [--projects-dir <dir> ...]
-	// Always include <root>/projects so registrations written via
-	// `grove project create` to ~/.grove/projects/ are found.
-	args := []string{"--root", root}
-	args = append(args, "--projects-dir", filepath.Join(root, "projects"))
-	for _, dir := range configDirPaths() {
-		args = append(args, "--projects-dir", dir)
-	}
-
-	cmd := exec.Command(daemonBin, args...)
+	cmd := exec.Command(daemonBin, "--root", root)
 	cmd.Stdout = nil
 	cmd.Stderr = nil
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
