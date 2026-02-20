@@ -17,6 +17,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -156,7 +157,10 @@ func (d *Daemon) handleStart(conn net.Conn, req proto.Request) {
 		return
 	}
 
-	instanceID := newInstanceID()
+	d.mu.Lock()
+	instanceID := d.nextInstanceID()
+	d.mu.Unlock()
+
 	branchName := "agent/" + instanceID
 
 	// Create the git worktree.
@@ -221,6 +225,15 @@ func (d *Daemon) handleAttach(conn net.Conn, req proto.Request) {
 	inst := d.getInstance(req.InstanceID)
 	if inst == nil {
 		respond(conn, proto.Response{OK: false, Error: "instance not found: " + req.InstanceID})
+		return
+	}
+
+	inst.mu.Lock()
+	state := inst.state
+	inst.mu.Unlock()
+
+	if state == proto.StateExited || state == proto.StateCrashed {
+		respond(conn, proto.Response{OK: false, Error: "instance has " + strings.ToLower(state)})
 		return
 	}
 
@@ -325,8 +338,32 @@ func (d *Daemon) getInstance(id string) *Instance {
 	return d.instances[id]
 }
 
-// newInstanceID returns an 8-character random hex string.
-func newInstanceID() string {
+// idAlphabet is the ordered set of characters used to build instance IDs.
+// Single-character IDs are assigned first (digits 1-9, then a-z), giving 35
+// slots before falling back to two-character combinations.
+var idAlphabet = []string{
+	"1", "2", "3", "4", "5", "6", "7", "8", "9",
+	"a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m",
+	"n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z",
+}
+
+// nextInstanceID returns the lowest unused instance ID.
+// Must be called with d.mu held.
+func (d *Daemon) nextInstanceID() string {
+	for _, id := range idAlphabet {
+		if _, taken := d.instances[id]; !taken {
+			return id
+		}
+	}
+	for _, a := range idAlphabet {
+		for _, b := range idAlphabet {
+			id := a + b
+			if _, taken := d.instances[id]; !taken {
+				return id
+			}
+		}
+	}
+	// Extremely unlikely: fall back to random hex.
 	b := make([]byte, 4)
 	rand.Read(b)
 	return hex.EncodeToString(b)

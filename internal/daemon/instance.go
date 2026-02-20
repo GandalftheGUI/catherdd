@@ -43,6 +43,10 @@ import (
 
 const (
 	maxLogBytes = 1 << 20 // 1 MiB rolling log per instance
+
+	// waitingIdleThreshold is how long an agent must produce no PTY output
+	// before its state is promoted from RUNNING to WAITING.
+	waitingIdleThreshold = 2 * time.Second
 )
 
 // Instance represents one running (or stopped) agent session.
@@ -63,6 +67,7 @@ type Instance struct {
 	ptm            *os.File     // PTY master; nil after process exits
 	logBuf         []byte       // rolling in-memory copy of recent output
 	lastOutputTime time.Time    // last time the PTY produced output
+	endedAt        time.Time    // when the process exited; zero if still running
 	attachedConn   net.Conn     // non-nil while a client is attached
 	attachDone     chan struct{} // closed when the current attach session ends
 }
@@ -77,10 +82,14 @@ func (inst *Instance) Info() proto.InstanceInfo {
 	// Claude streams output continuously while working; silence means it is
 	// waiting for human input.
 	if state == proto.StateRunning && !inst.lastOutputTime.IsZero() &&
-		time.Since(inst.lastOutputTime) > 2*time.Second {
+		time.Since(inst.lastOutputTime) > waitingIdleThreshold {
 		state = proto.StateWaiting
 	}
 
+	var endedAt int64
+	if !inst.endedAt.IsZero() {
+		endedAt = inst.endedAt.Unix()
+	}
 	return proto.InstanceInfo{
 		ID:          inst.ID,
 		Project:     inst.Project,
@@ -89,6 +98,7 @@ func (inst *Instance) Info() proto.InstanceInfo {
 		Branch:      inst.Branch,
 		WorktreeDir: inst.WorktreeDir,
 		CreatedAt:   inst.CreatedAt.Unix(),
+		EndedAt:     endedAt,
 		PID:         inst.pid,
 	}
 }
@@ -191,6 +201,7 @@ func (inst *Instance) ptyReader(cmd *exec.Cmd) {
 	inst.mu.Lock()
 	inst.ptm.Close()
 	inst.ptm = nil
+	inst.endedAt = time.Now()
 	if waitErr == nil {
 		inst.state = proto.StateExited
 	} else {

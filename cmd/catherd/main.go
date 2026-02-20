@@ -536,7 +536,11 @@ func drawWatch(fd int, socketPath string) {
 		if len(task) > taskW {
 			task = task[:taskW-3] + "..."
 		}
-		uptime := formatUptime(now - inst.CreatedAt)
+		uptimeEnd := now
+		if inst.EndedAt > 0 {
+			uptimeEnd = inst.EndedAt
+		}
+		uptime := formatUptime(uptimeEnd - inst.CreatedAt)
 		stateColored := colorState(inst.State)
 		fmt.Printf("%-*s  %-*s  %s%-*s\033[0m  %-*s  %s\n",
 			idW, inst.ID,

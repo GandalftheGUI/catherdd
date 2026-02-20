@@ -52,6 +52,7 @@ type InstanceInfo struct {
 	Branch      string `json:"branch"`
 	WorktreeDir string `json:"worktree_dir"`
 	CreatedAt   int64  `json:"created_at"`
+	EndedAt     int64  `json:"ended_at,omitempty"` // unix timestamp; 0 if still running
 	PID         int    `json:"pid"`
 }
 
