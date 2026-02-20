@@ -86,8 +86,8 @@ Project commands:
   project create <name> [--repo <url>]
                            Register a new project (name + repo URL)
   project list             List registered projects (numbered)
-  project delete <name>    Remove a project and all its worktrees
-  main <project>           Print the main checkout path for a project
+  project delete <name|#>  Remove a project and all its worktrees
+  main <project|#>           Print the main checkout path for a project
 
 Instance commands:
   start <project|#> <branch> [-d]
@@ -261,10 +261,10 @@ func cmdProjectList() {
 // deletes the entire project directory under ~/.grove/projects/<name>/.
 func cmdProjectDelete() {
 	if len(os.Args) < 4 || os.Args[3] == "" {
-		fmt.Fprintln(os.Stderr, "usage: grove project delete <name>")
+		fmt.Fprintln(os.Stderr, "usage: grove project delete <name|#>")
 		os.Exit(1)
 	}
-	name := os.Args[3]
+	name := resolveProject(os.Args[3])
 
 	projectDir := filepath.Join(rootDir(), "projects", name)
 	yamlPath := filepath.Join(projectDir, "project.yaml")
@@ -916,7 +916,7 @@ func cmdMain() {
 		fmt.Fprintln(os.Stderr, "usage: grove main <project>")
 		os.Exit(1)
 	}
-	project := os.Args[2]
+	project := resolveProject(os.Args[2])
 	fmt.Println(filepath.Join(rootDir(), "projects", project, "main"))
 }
 
