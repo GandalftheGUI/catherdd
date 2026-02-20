@@ -85,14 +85,16 @@ func usage() {
 Project commands:
   project create <name> [--repo <url>]
                            Register a new project (name + repo URL)
-  project list             List defined projects
+  project list             List registered projects (numbered)
   project delete <name>    Remove a project and all its worktrees
   main <project>           Print the main checkout path for a project
 
 Instance commands:
-  start <project> <branch> [-d]  Start a new agent instance on <branch> (attaches immediately; -d to skip)
+  start <project|#> <branch> [-d]
+                                 Start a new agent instance on <branch> (attaches immediately; -d to skip)
+                                 <project> may be a name or the number from 'project list'
   attach <instance-id>           Attach terminal to an instance (detach: Ctrl-])
-  stop <instance-id>             Kill the agent; instance stays in list as CRASHED
+  stop <instance-id>             Kill the agent; instance stays in list as KILLED
   restart <instance-id> [-d]     Restart agent in existing worktree (attaches immediately; -d to skip)
   finish <instance-id>           Run completion steps; instance stays as FINISHED
   drop <instance-id>             Delete the worktree and branch permanently

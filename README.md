@@ -170,7 +170,7 @@ dev:
 ```
 grove project create <name> [--repo <url>]
                          Register a new project (name + repo URL)
-grove project list     List defined projects
+grove project list     List registered projects (numbered)
 grove project delete <name>
                       Remove a project and all its worktrees (prompts to confirm)
 grove main <project>   Print the main checkout path for a project
@@ -179,8 +179,9 @@ grove main <project>   Print the main checkout path for a project
 ### Instance commands
 
 ```
-grove start <project> <branch> [-d]
+grove start <project|#> <branch> [-d]
                          Start a new agent instance on <branch>
+                         <project> may be a name or the number from 'project list'
                          Attaches immediately; use -d to skip
 grove attach <id>      Attach terminal to a running instance (detach: Ctrl-])
 grove stop <id>        Kill the agent; instance stays in list as KILLED
@@ -260,9 +261,9 @@ grove daemon install
 # 1. Register a project (creates ~/.grove/projects/my-app/project.yaml)
 grove project create my-app --repo git@github.com:you/my-app.git
 
-# 2. Start an agent on a branch
+# 2. Start an agent on a branch (by name or number from 'project list')
 #    If the repo has no .grove/project.yaml, grove will prompt you to create one.
-grove start my-app feat/dark-mode
+grove start 1 feat/dark-mode
 
 # … interact with the agent, then Ctrl-] to detach …
 
