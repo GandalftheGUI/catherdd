@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -93,9 +94,18 @@ func ensureMainCheckout(p *Project, w io.Writer) error {
 
 	fmt.Fprintf(w, "Cloning %s into %s …\n", p.Repo, mainDir)
 	cmd := exec.Command("git", "clone", p.Repo, mainDir)
-	cmd.Stdout = w
-	cmd.Stderr = w
-	return cmd.Run()
+	out, err := cmd.CombinedOutput()
+	if len(out) > 0 {
+		_, _ = w.Write(out)
+	}
+	if err != nil {
+		detail := strings.TrimSpace(string(out))
+		if detail != "" {
+			return fmt.Errorf("git clone %q failed: %s", p.Repo, detail)
+		}
+		return fmt.Errorf("git clone %q failed: %w", p.Repo, err)
+	}
+	return nil
 }
 
 // pullMain runs "git pull" in the main checkout to bring it up-to-date with

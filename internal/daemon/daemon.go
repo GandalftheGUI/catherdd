@@ -168,6 +168,7 @@ func (d *Daemon) handleStart(conn net.Conn, req proto.Request) {
 	d.mu.Lock()
 	instanceID := d.nextInstanceID()
 	d.mu.Unlock()
+	startedAt := time.Now()
 
 	logFile := filepath.Join(d.rootDir, "logs", instanceID+".log")
 	logFd, _ := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
@@ -182,9 +183,12 @@ func (d *Daemon) handleStart(conn net.Conn, req proto.Request) {
 	if logFd != nil {
 		setupW = io.MultiWriter(&outputBuf, logFd)
 	}
+	log.Printf("start requested: project=%s branch=%s instance=%s repo=%q main_dir=%s", req.Project, req.Branch, instanceID, p.Repo, p.MainDir())
 
 	// Ensure the canonical checkout exists (clone if needed).
 	if err := ensureMainCheckout(p, setupW); err != nil {
+		log.Printf("start failed: stage=clone project=%s branch=%s instance=%s repo=%q elapsed=%s err=%v%s",
+			req.Project, req.Branch, instanceID, p.Repo, time.Since(startedAt).Round(time.Millisecond), err, repoURLHintSuffix(p.Repo))
 		respond(conn, proto.Response{OK: false, Error: err.Error()})
 		return
 	}
@@ -218,6 +222,8 @@ func (d *Daemon) handleStart(conn net.Conn, req proto.Request) {
 	// Create the git worktree on the user-specified branch.
 	worktreeDir, err := createWorktree(p, instanceID, req.Branch)
 	if err != nil {
+		log.Printf("start failed: stage=worktree project=%s branch=%s instance=%s main_dir=%s elapsed=%s err=%v",
+			req.Project, req.Branch, instanceID, p.MainDir(), time.Since(startedAt).Round(time.Millisecond), err)
 		respond(conn, proto.Response{OK: false, Error: err.Error()})
 		return
 	}
@@ -225,6 +231,8 @@ func (d *Daemon) handleStart(conn net.Conn, req proto.Request) {
 	// Run bootstrap commands in the new worktree.
 	if err := runBootstrap(p, worktreeDir, setupW); err != nil {
 		removeWorktree(p, instanceID, req.Branch)
+		log.Printf("start failed: stage=bootstrap project=%s branch=%s instance=%s worktree=%s elapsed=%s err=%v",
+			req.Project, req.Branch, instanceID, worktreeDir, time.Since(startedAt).Round(time.Millisecond), err)
 		respond(conn, proto.Response{OK: false, Error: err.Error()})
 		return
 	}
@@ -247,6 +255,8 @@ func (d *Daemon) handleStart(conn net.Conn, req proto.Request) {
 	}
 	if err := inst.startAgent(agentCmd, p.Agent.Args); err != nil {
 		removeWorktree(p, instanceID, req.Branch)
+		log.Printf("start failed: stage=agent-launch project=%s branch=%s instance=%s worktree=%s elapsed=%s err=%v",
+			req.Project, req.Branch, instanceID, worktreeDir, time.Since(startedAt).Round(time.Millisecond), err)
 		respond(conn, proto.Response{OK: false, Error: err.Error()})
 		return
 	}
@@ -263,6 +273,14 @@ func (d *Daemon) handleStart(conn net.Conn, req proto.Request) {
 	if outputBuf.Len() > 0 {
 		conn.Write(outputBuf.Bytes())
 	}
+	log.Printf("start succeeded: project=%s branch=%s instance=%s worktree=%s elapsed=%s", req.Project, req.Branch, instanceID, worktreeDir, time.Since(startedAt).Round(time.Millisecond))
+}
+
+func repoURLHintSuffix(repo string) string {
+	if strings.HasPrefix(repo, "github.com/") || strings.HasPrefix(repo, "gitlab.com/") || strings.HasPrefix(repo, "bitbucket.org/") {
+		return " hint=\"repo URL may be missing scheme; try https://host/org/repo.git or git@host:org/repo.git\""
+	}
+	return ""
 }
 
 func (d *Daemon) handleList(conn net.Conn) {

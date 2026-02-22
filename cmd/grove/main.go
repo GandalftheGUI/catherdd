@@ -107,7 +107,8 @@ Instance commands:
 Daemon commands:
   daemon install           Register groved as a login LaunchAgent
   daemon uninstall         Remove the LaunchAgent
-  daemon status            Show whether the LaunchAgent is installed and running`)
+  daemon status            Show whether the LaunchAgent is installed and running
+  daemon logs [-f] [-n N]  Print daemon log (-f follow, -n tail lines)`)
 }
 
 // ─── Subcommand implementations ───────────────────────────────────────────────
@@ -167,14 +168,16 @@ func cmdProjectCreate() {
 		os.Exit(1)
 	}
 
-	fmt.Printf("created project %q\n", name)
-	fmt.Printf("config: %s\n", yamlPath)
+	fmt.Printf("\n%s✓  Created project%s %s%q%s\n\n", colorGreen+colorBold, colorReset, colorCyan, name, colorReset)
+	fmt.Printf("%sConfig:%s %s%s%s\n\n", colorBold, colorReset, colorCyan, yamlPath, colorReset)
+	fmt.Printf("%sNext step:%s\n\n", colorBold, colorReset)
 	if *repo == "" {
-		fmt.Println("edit the file to set your repo URL, then run:")
+		fmt.Printf("  %s1.%s Edit the file to set your repo URL\n", colorBold, colorReset)
+		fmt.Printf("  %s2.%s Start an instance\n", colorBold, colorReset)
 	} else {
-		fmt.Println("run:")
+		fmt.Printf("  %s1.%s Start an instance\n", colorBold, colorReset)
 	}
-	fmt.Printf("  grove start %s <branch>\n", name)
+	fmt.Printf("     %sgrove start %s <branch>%s\n\n", colorDim, name, colorReset)
 }
 
 // projectEntry holds the parsed fields grove cares about from a registration.
@@ -244,12 +247,12 @@ func resolveProject(arg string) string {
 func cmdProjectList() {
 	entries := loadProjectEntries()
 	if len(entries) == 0 {
-		fmt.Println("no projects defined")
+		fmt.Printf("%sno projects defined%s\n", colorDim, colorReset)
 		return
 	}
 
-	fmt.Printf("%-4s  %-20s  %s\n", "#", "NAME", "REPO")
-	fmt.Printf("%-4s  %-20s  %s\n", "----", "--------------------", "----")
+	fmt.Printf("%s%-4s  %-20s  %s%s\n", colorBold, "#", "NAME", "REPO", colorReset)
+	fmt.Printf("%s%-4s  %-20s  %s%s\n", colorDim, "----", "--------------------", "----", colorReset)
 	for i, e := range entries {
 		fmt.Printf("%-4d  %-20s  %s\n", i+1, e.name, e.repo)
 	}
@@ -277,14 +280,15 @@ func cmdProjectDelete() {
 		os.Exit(1)
 	}
 
-	fmt.Fprintf(os.Stderr, "This will remove project %q and all its worktrees.\n", name)
-	fmt.Print("Continue? [y/N] ")
+	fmt.Printf("\n%s⚠  Remove project%s %s%q%s\n\n", colorYellow+colorBold, colorReset, colorCyan, name, colorReset)
+	fmt.Printf("  This will delete the project and %sall its worktrees%s.\n\n", colorBold, colorReset)
+	fmt.Printf("%sContinue?%s [y/N] ", colorBold, colorReset)
 
 	reader := bufio.NewReader(os.Stdin)
 	answer, _ := reader.ReadString('\n')
 	answer = strings.TrimSpace(answer)
 	if answer != "y" && answer != "Y" {
-		fmt.Println("aborted")
+		fmt.Printf("%saborted%s\n", colorDim, colorReset)
 		return
 	}
 
@@ -292,7 +296,7 @@ func cmdProjectDelete() {
 		fmt.Fprintf(os.Stderr, "grove: %v\n", err)
 		os.Exit(1)
 	}
-	fmt.Printf("deleted project %q\n", name)
+	fmt.Printf("\n%s✓  Deleted project%s %s%q%s\n\n", colorGreen+colorBold, colorReset, colorCyan, name, colorReset)
 }
 
 func cmdStart() {
@@ -342,6 +346,7 @@ func cmdStart() {
 			os.Exit(1)
 		}
 		fmt.Fprintf(os.Stderr, "grove: %s\n", resp.Error)
+		fmt.Fprintf(os.Stderr, "grove: check daemon logs with: grove daemon logs -n 100\n")
 		os.Exit(1)
 	}
 
@@ -349,7 +354,7 @@ func cmdStart() {
 	io.Copy(os.Stdout, conn)
 	conn.Close()
 
-	fmt.Printf("started instance %s\n", resp.InstanceID)
+	fmt.Printf("\n%s✓  Started instance%s %s%s%s\n\n", colorGreen+colorBold, colorReset, colorCyan, resp.InstanceID, colorReset)
 
 	if !*detach {
 		doAttach(resp.InstanceID)
@@ -494,12 +499,12 @@ func cmdList() {
 	}
 
 	if len(instances) == 0 {
-		fmt.Println("no instances")
+		fmt.Printf("%sno instances%s\n", colorDim, colorReset)
 		return
 	}
 
-	fmt.Printf("%-10s  %-12s  %-10s  %s\n", "ID", "PROJECT", "STATE", "BRANCH")
-	fmt.Printf("%-10s  %-12s  %-10s  %s\n", "----------", "------------", "----------", "------")
+	fmt.Printf("%s%-10s  %-12s  %-10s  %s%s\n", colorBold, "ID", "PROJECT", "STATE", "BRANCH", colorReset)
+	fmt.Printf("%s%-10s  %-12s  %-10s  %s%s\n", colorDim, "----------", "------------", "----------", "------", colorReset)
 	for _, inst := range instances {
 		color := colorState(inst.State)
 		reset := ""
@@ -714,6 +719,19 @@ func cmdWatch() {
 	}
 }
 
+func truncate(s string, n int) string {
+	if n <= 0 {
+		return ""
+	}
+	if len(s) <= n {
+		return s
+	}
+	if n <= 3 {
+		return s[:n]
+	}
+	return s[:n-3] + "..."
+}
+
 func drawWatch(fd int, socketPath string) {
 	width, _, err := term.GetSize(fd)
 	if err != nil || width < 40 {
@@ -737,43 +755,91 @@ func drawWatch(fd int, socketPath string) {
 		return
 	}
 
-	// Column widths: ID(10), PROJECT(12), STATE(10), UPTIME(10), TASK(dynamic).
-	const idW, projW, stateW, uptimeW = 10, 12, 10, 10
-	fixed := idW + projW + stateW + uptimeW + 4*2 // 4 separators of 2 spaces
-	taskW := width - fixed
-	if taskW < 10 {
-		taskW = 10
+	// Compute dynamic column widths based on actual content.
+	const idW, stateW, uptimeW = 10, 10, 10
+	projW := 14 // minimum width
+	for _, inst := range resp.Instances {
+		if l := len(inst.Project); l > projW {
+			projW = l
+		}
+	}
+	if projW > 30 {
+		projW = 30
 	}
 
-	fmt.Print("\033[H\033[2J")
-	fmt.Printf("%-*s  %-*s  %-*s  %-*s  %s\n",
+	const separators = 4 * 2 // 4 column gaps of 2 spaces
+	branchW := width - (idW + projW + stateW + uptimeW + separators)
+	if branchW < 15 {
+		branchW = 15
+	}
+
+	var buf strings.Builder
+	buf.WriteString("\033[H\033[2J")
+
+	// ASCII art grove header — centered.
+	artLines := []string{
+		`    /\  /\  /\`,
+		`   /  \/  \/  \   g r o v e`,
+		`  /____________\`,
+	}
+	maxArtW := 0
+	for _, l := range artLines {
+		if len(l) > maxArtW {
+			maxArtW = len(l)
+		}
+	}
+	leftPad := (width - maxArtW) / 2
+	if leftPad < 0 {
+		leftPad = 0
+	}
+	pad := strings.Repeat(" ", leftPad)
+	buf.WriteString("\033[32m") // green for the trees
+	for _, l := range artLines {
+		buf.WriteString(pad + l + "\n")
+	}
+	buf.WriteString("\033[0m\n")
+
+	// Column headers.
+	fmt.Fprintf(&buf, "%-*s  %-*s  %-*s  %-*s  %s\n",
 		idW, "ID", projW, "PROJECT", stateW, "STATE", uptimeW, "UPTIME", "BRANCH")
-	fmt.Printf("%-*s  %-*s  %-*s  %-*s  %s\n",
-		idW, "----------", projW, "------------", stateW, "----------", uptimeW, "----------", "------")
+	fmt.Fprintf(&buf, "\033[2m%s  %s  %s  %s  %s\033[0m\n",
+		strings.Repeat("─", idW),
+		strings.Repeat("─", projW),
+		strings.Repeat("─", stateW),
+		strings.Repeat("─", uptimeW),
+		strings.Repeat("─", branchW))
 
 	now := time.Now().Unix()
+	var running int
 	for _, inst := range resp.Instances {
-		branch := inst.Branch
-		if len(branch) > taskW {
-			branch = branch[:taskW-3] + "..."
-		}
+		project := truncate(inst.Project, projW)
+		branch := truncate(inst.Branch, branchW)
 		uptimeEnd := now
 		if inst.EndedAt > 0 {
 			uptimeEnd = inst.EndedAt
 		}
 		uptime := formatUptime(uptimeEnd - inst.CreatedAt)
 		stateColored := colorState(inst.State)
-		fmt.Printf("%-*s  %-*s  %s%-*s\033[0m  %-*s  %s\n",
+		fmt.Fprintf(&buf, "%-*s  %-*s  %s%-*s\033[0m  %-*s  %s\n",
 			idW, inst.ID,
-			projW, inst.Project,
+			projW, project,
 			stateColored, stateW, inst.State,
 			uptimeW, uptime,
 			branch)
+		if inst.State == "RUNNING" || inst.State == "ATTACHED" {
+			running++
+		}
 	}
 
 	if len(resp.Instances) == 0 {
-		fmt.Println("no instances")
+		buf.WriteString("\n  no instances running\n")
 	}
+
+	// Status footer.
+	fmt.Fprintf(&buf, "\n\033[2m  %d instance(s)  ·  %d running  ·  %s\033[0m\n",
+		len(resp.Instances), running, time.Now().Format("15:04:05"))
+
+	fmt.Print(buf.String())
 }
 
 func colorState(state string) string {
@@ -822,7 +888,7 @@ func cmdStop() {
 		InstanceID: instanceID,
 	})
 
-	fmt.Printf("stopped %s\n", instanceID)
+	fmt.Printf("\n%s✓  Stopped%s %s%s%s\n\n", colorGreen+colorBold, colorReset, colorCyan, instanceID, colorReset)
 }
 
 func cmdRestart() {
@@ -845,7 +911,7 @@ func cmdRestart() {
 		InstanceID: instanceID,
 	})
 
-	fmt.Printf("restarted %s\n", instanceID)
+	fmt.Printf("\n%s✓  Restarted%s %s%s%s\n\n", colorGreen+colorBold, colorReset, colorCyan, instanceID, colorReset)
 
 	if !*detach {
 		doAttach(instanceID)
@@ -873,15 +939,17 @@ func cmdDrop() {
 		os.Exit(1)
 	}
 
-	fmt.Printf("worktree: %s\n", found.WorktreeDir)
-	fmt.Printf("branch:   %s\n", found.Branch)
-	fmt.Print("Delete? [y/N] ")
+	fmt.Printf("\n%sInstance%s %s%s%s\n\n", colorBold, colorReset, colorCyan, instanceID, colorReset)
+	fmt.Printf("  %sProject:%s  %s%s%s\n", colorDim, colorReset, colorCyan, found.Project, colorReset)
+	fmt.Printf("  %sWorktree:%s %s%s%s\n", colorDim, colorReset, colorCyan, found.WorktreeDir, colorReset)
+	fmt.Printf("  %sBranch:%s   %s%s%s\n\n", colorDim, colorReset, colorCyan, found.Branch, colorReset)
+	fmt.Printf("%sDelete instance %q and worktree?%s [y/N] ", colorBold, found.Project, colorReset)
 
 	reader := bufio.NewReader(os.Stdin)
 	answer, _ := reader.ReadString('\n')
 	answer = strings.TrimSpace(answer)
 	if answer != "y" && answer != "Y" {
-		fmt.Println("aborted")
+		fmt.Printf("%saborted%s\n", colorDim, colorReset)
 		return
 	}
 
@@ -889,7 +957,7 @@ func cmdDrop() {
 		Type:       proto.ReqDrop,
 		InstanceID: instanceID,
 	})
-	fmt.Printf("dropped %s\n", instanceID)
+	fmt.Printf("\n%s✓  Dropped%s %s%s%s\n\n", colorGreen+colorBold, colorReset, colorCyan, instanceID, colorReset)
 }
 
 func cmdFinish() {
@@ -976,27 +1044,29 @@ func cmdPrune() {
 	}
 
 	if len(dead) == 0 {
-		fmt.Println("nothing to prune")
+		fmt.Printf("%snothing to prune%s\n", colorDim, colorReset)
 		return
 	}
 
+	fmt.Printf("\n%sInstances to drop:%s\n\n", colorBold, colorReset)
 	for _, inst := range dead {
-		fmt.Printf("  %s  %-9s  worktree: %s\n", inst.ID, inst.State, inst.WorktreeDir)
+		fmt.Printf("  %s%s%s  %s%s%s  %-9s  %s%s%s\n", colorCyan, inst.ID, colorReset, colorDim, inst.Project, colorReset, inst.State, colorDim, inst.WorktreeDir, colorReset)
 	}
-	fmt.Printf("Drop %d instance(s) and their worktrees? [y/N] ", len(dead))
+	fmt.Printf("\n%sDrop %d instance(s) and their worktrees?%s [y/N] ", colorBold, len(dead), colorReset)
 
 	reader := bufio.NewReader(os.Stdin)
 	answer, _ := reader.ReadString('\n')
 	answer = strings.TrimSpace(answer)
 	if answer != "y" && answer != "Y" {
-		fmt.Println("aborted")
+		fmt.Printf("%saborted%s\n", colorDim, colorReset)
 		return
 	}
 
 	for _, inst := range dead {
 		mustRequest(proto.Request{Type: proto.ReqDrop, InstanceID: inst.ID})
-		fmt.Printf("dropped %s\n", inst.ID)
+		fmt.Printf("%s✓  Dropped%s %s%s%s\n", colorGreen+colorBold, colorReset, colorCyan, inst.ID, colorReset)
 	}
+	fmt.Println()
 }
 
 // ─── Daemon install/uninstall/status ─────────────────────────────────────────
@@ -1010,7 +1080,7 @@ func launchAgentPlistPath() string {
 
 func cmdDaemon() {
 	if len(os.Args) < 3 {
-		fmt.Fprintln(os.Stderr, "usage: grove daemon <install|uninstall|status>")
+		fmt.Fprintln(os.Stderr, "usage: grove daemon <install|uninstall|status|logs>")
 		os.Exit(1)
 	}
 	switch os.Args[2] {
@@ -1020,9 +1090,50 @@ func cmdDaemon() {
 		cmdDaemonUninstall()
 	case "status":
 		cmdDaemonStatus()
+	case "logs":
+		cmdDaemonLogs()
 	default:
 		fmt.Fprintf(os.Stderr, "grove: unknown daemon subcommand %q\n", os.Args[2])
 		os.Exit(1)
+	}
+}
+
+func cmdDaemonLogs() {
+	fs := flag.NewFlagSet("daemon logs", flag.ExitOnError)
+	follow := fs.Bool("f", false, "follow log output")
+	fs.BoolVar(follow, "follow", false, "follow log output")
+	tailLines := fs.Int("n", 0, "print only the last N lines (0 = full file)")
+	fs.IntVar(tailLines, "tail", 0, "print only the last N lines (0 = full file)")
+	fs.Usage = func() {
+		fmt.Fprintln(os.Stderr, "usage: grove daemon logs [-f] [-n N]")
+	}
+	fs.Parse(os.Args[3:])
+	if len(fs.Args()) != 0 {
+		fmt.Fprintln(os.Stderr, "usage: grove daemon logs [-f] [-n N]")
+		os.Exit(1)
+	}
+	if *tailLines < 0 {
+		fmt.Fprintln(os.Stderr, "grove: -n/--tail must be >= 0")
+		os.Exit(1)
+	}
+
+	logPath := filepath.Join(rootDir(), "daemon.log")
+	var err error
+	if *tailLines > 0 {
+		err = printLastLines(logPath, *tailLines, os.Stdout)
+	} else {
+		err = copyFileToStdout(logPath)
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "grove: %v\n", err)
+		os.Exit(1)
+	}
+
+	if *follow {
+		if err := followFile(logPath); err != nil {
+			fmt.Fprintf(os.Stderr, "grove: %v\n", err)
+			os.Exit(1)
+		}
 	}
 }
 
@@ -1064,7 +1175,9 @@ func cmdDaemonInstall() {
 		os.Exit(1)
 	}
 
-	fmt.Printf("groved LaunchAgent installed\nplist:  %s\nlog:    %s\n", plistPath, logFile)
+	fmt.Printf("\n%s✓  groved LaunchAgent installed%s\n\n", colorGreen+colorBold, colorReset)
+	fmt.Printf("  %sPlist:%s %s%s%s\n", colorDim, colorReset, colorCyan, plistPath, colorReset)
+	fmt.Printf("  %sLog:%s   %s%s%s\n\n", colorDim, colorReset, colorCyan, logFile, colorReset)
 }
 
 func cmdDaemonUninstall() {
@@ -1074,22 +1187,123 @@ func cmdDaemonUninstall() {
 	plistPath := launchAgentPlistPath()
 	os.Remove(plistPath)
 
-	fmt.Println("groved LaunchAgent removed")
+	fmt.Printf("\n%s✓  groved LaunchAgent removed%s\n\n", colorGreen+colorBold, colorReset)
 }
 
 func cmdDaemonStatus() {
 	plistPath := launchAgentPlistPath()
 	if _, err := os.Stat(plistPath); os.IsNotExist(err) {
-		fmt.Println("not installed")
+		fmt.Printf("%snot installed%s\n", colorDim, colorReset)
 		return
 	}
 
 	root := rootDir()
 	sock := filepath.Join(root, "groved.sock")
 	if pingDaemon(sock) {
-		fmt.Printf("running\nplist: %s\n", plistPath)
+		fmt.Printf("%s✓  running%s\n\n  %splist:%s %s%s%s\n", colorGreen+colorBold, colorReset, colorDim, colorReset, colorCyan, plistPath, colorReset)
 	} else {
-		fmt.Printf("installed but not running\nplist: %s\n", plistPath)
+		fmt.Printf("%s⚠  installed but not running%s\n\n  %splist:%s %s%s%s\n", colorYellow+colorBold, colorReset, colorDim, colorReset, colorCyan, plistPath, colorReset)
+	}
+}
+
+func copyFileToStdout(path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("daemon log not found at %s", path)
+		}
+		return fmt.Errorf("open daemon log: %w", err)
+	}
+	defer f.Close()
+
+	if _, err := io.Copy(os.Stdout, f); err != nil {
+		return fmt.Errorf("read daemon log: %w", err)
+	}
+	return nil
+}
+
+func printLastLines(path string, n int, w io.Writer) error {
+	f, err := os.Open(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("daemon log not found at %s", path)
+		}
+		return fmt.Errorf("open daemon log: %w", err)
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+
+	ring := make([]string, n)
+	count := 0
+	for scanner.Scan() {
+		ring[count%n] = scanner.Text()
+		count++
+	}
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("read daemon log: %w", err)
+	}
+
+	start := 0
+	lines := count
+	if count > n {
+		start = count % n
+		lines = n
+	}
+	for i := 0; i < lines; i++ {
+		fmt.Fprintln(w, ring[(start+i)%n])
+	}
+	return nil
+}
+
+func followFile(path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("daemon log not found at %s", path)
+		}
+		return fmt.Errorf("open daemon log: %w", err)
+	}
+	defer f.Close()
+
+	offset, err := f.Seek(0, io.SeekEnd)
+	if err != nil {
+		return fmt.Errorf("seek daemon log: %w", err)
+	}
+
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(sigCh)
+
+	for {
+		select {
+		case <-sigCh:
+			return nil
+		case <-ticker.C:
+			info, err := f.Stat()
+			if err != nil {
+				return fmt.Errorf("stat daemon log: %w", err)
+			}
+
+			size := info.Size()
+			if size < offset {
+				offset = 0
+			}
+			if size <= offset {
+				continue
+			}
+			if _, err := f.Seek(offset, io.SeekStart); err != nil {
+				return fmt.Errorf("seek daemon log: %w", err)
+			}
+			if _, err := io.CopyN(os.Stdout, f, size-offset); err != nil && err != io.EOF {
+				return fmt.Errorf("read daemon log: %w", err)
+			}
+			offset = size
+		}
 	}
 }
 

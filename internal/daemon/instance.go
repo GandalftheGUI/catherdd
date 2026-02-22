@@ -33,6 +33,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -128,7 +129,15 @@ func (inst *Instance) persistMeta(instancesDir string) {
 func (inst *Instance) startAgent(agentCmd string, agentArgs []string) error {
 	cmd := exec.Command(agentCmd, agentArgs...)
 	cmd.Dir = inst.WorktreeDir
-	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
+	// bash in sh mode resets PS1 to \s-\v\$ during initialisation, ignoring
+	// whatever is in the environment.  PROMPT_COMMAND is evaluated before every
+	// prompt and is NOT reset in sh mode, so it reliably overrides PS1 after
+	// all startup files have run.  Agents like claude/aider ignore both
+	// variables, so this has no effect on them.
+	ps1 := fmt.Sprintf("\033[2m%s/%s\033[0m $ ", inst.Project, inst.Branch)
+	// Set PS1 then clear PROMPT_COMMAND so it only fires once.
+	promptCmd := `PS1="` + ps1 + `"; unset PROMPT_COMMAND`
+	cmd.Env = envWith(os.Environ(), "TERM=xterm-256color", "PROMPT_COMMAND="+promptCmd)
 
 	// pty.Start sets Setsid:true on the child, which creates a new session and
 	// process group (PGID = child PID).  Do NOT also set Setpgid here: calling
@@ -384,4 +393,24 @@ func (inst *Instance) destroy() {
 	if conn != nil {
 		conn.Close()
 	}
+}
+
+// envWith returns a copy of base with the given key=value pairs applied,
+// replacing any existing entry for the same key.
+func envWith(base []string, overrides ...string) []string {
+	skip := make(map[string]bool, len(overrides))
+	for _, kv := range overrides {
+		if i := strings.IndexByte(kv, '='); i > 0 {
+			skip[kv[:i]] = true
+		}
+	}
+	env := make([]string, 0, len(base)+len(overrides))
+	env = append(env, overrides...)
+	for _, kv := range base {
+		if i := strings.IndexByte(kv, '='); i > 0 && skip[kv[:i]] {
+			continue
+		}
+		env = append(env, kv)
+	}
+	return env
 }

@@ -205,6 +205,8 @@ grove prune [--finished]
 grove daemon install    Register groved as a login LaunchAgent
 grove daemon uninstall  Remove the LaunchAgent
 grove daemon status     Show whether the LaunchAgent is installed and running
+grove daemon logs [-f] [-n N]
+                         Print daemon log (-f follow, -n tail lines)
 ```
 
 ---
@@ -307,6 +309,13 @@ grove daemon install
 
 This writes `~/Library/LaunchAgents/com.grove.daemon.plist` and starts the
 daemon immediately. Daemon output is written to `~/.grove/daemon.log`.
+
+Useful for debugging startup/clone errors:
+
+```bash
+grove daemon logs -n 100      # last 100 lines
+grove daemon logs -f          # follow new lines
+```
 
 > **Note:** `grove` also auto-starts the daemon on demand when you run any
 > command that requires it. The LaunchAgent approach is preferred on macOS
