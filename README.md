@@ -1,19 +1,27 @@
 # Grove
 
 A local daemon + CLI that supervises AI coding agents running in isolated Git
-worktrees on a single macOS machine.
+worktrees and Docker containers on a single macOS machine.
 
 groved is **not** an AI model. It is a process supervisor and developer UX
 layer around existing agent CLIs (e.g. `claude`, `aider`).
 
-<img width="916" height="469" alt="Screenshot 2026-02-21 at 11 11 27 PM" src="https://github.com/user-attachments/assets/9ffbd86b-598d-4ba2-abc6-63d858b093de" />
+<img width="916" height="469" alt="Screenshot 2026-02-21 at 11 11 27 PM" src="https://github.com/user-attachments/assets/9ffbd86b-598d-4ba2-abc6-63d858b093de" />
+
+---
+
+## Requirements
+
+- **macOS** (daemon management via LaunchAgent; Linux works without it)
+- **Docker** — required, no fallback. Every agent instance runs inside a container.
+  Install: https://docs.docker.com/get-docker/
 
 ---
 
 ## Binaries
 
-| Binary     | Role                                   |
-|------------|----------------------------------------|
+| Binary   | Role                                   |
+|----------|----------------------------------------|
 | `groved` | Background daemon (Unix socket server) |
 | `grove`  | CLI client                             |
 
@@ -32,15 +40,18 @@ grove start my-project feat/dark-mode
    to get the repo URL
 2. Clones the repo (if needed) into `~/.grove/projects/my-project/main/`
 3. Runs `git pull` to sync to the latest remote HEAD
-4. Reads `.grove/project.yaml` from inside the cloned repo — this is the
-   project-owned config that defines bootstrap, agent, and complete settings;
-   if the file is missing and no agent is configured in the registration,
-   prompts you to create it
+4. Reads `.grove/project.yaml` from inside the cloned repo — the project-owned
+   config that defines container image, start commands, agent, and finish steps;
+   if missing, prompts you to create it
 5. Creates a Git worktree at `~/.grove/projects/my-project/worktrees/<id>/`
    on branch `feat/dark-mode`
-6. Runs the `bootstrap` commands in the worktree (output streams to your terminal)
-7. Allocates a real PTY, starts the agent process inside it, and attaches your
-   terminal immediately (pass `-d` to skip auto-attach)
+6. Starts a Docker container with the worktree bind-mounted inside it
+7. Runs the `start` commands inside the container
+8. Allocates a PTY, runs the agent inside the container via `docker exec -it`,
+   and attaches your terminal immediately (pass `-d` to skip)
+
+Each instance gets its own container (or compose stack), so databases, ports,
+and environment state are fully isolated between parallel instances.
 
 **Worktrees are first-class citizens.** An instance record lives exactly as
 long as its worktree. `drop` is the only operation that removes both.
@@ -60,41 +71,65 @@ go build -o bin/grove  ./cmd/grove
 ## Project config
 
 Project configuration has two parts: a **registration** on your machine and an
-optional **in-repo config** owned by the project.
+**in-repo config** owned by the project.
 
 ### Registration (per-machine)
 
 Tells grove how to **find** the project. Created by `grove project create` and
-stored in `~/.grove/projects/<name>/project.yaml`. A registration is just a
-name and repo URL — it does not define how to build, run, or complete work.
+stored in `~/.grove/projects/<name>/project.yaml`. Just a name and repo URL.
 
 ```yaml
 name: my-app
 repo: git@github.com:example/my-app.git
 ```
 
-The registration, clone, and worktrees all live together under
-`~/.grove/projects/<name>/`. The grove repo itself contains only tool code.
-
-### In-repo config (owned by the project repo)
+### In-repo config (`.grove/project.yaml` in your project)
 
 The **authoritative source** for how to set up and run the project. Committed
-at `.grove/project.yaml` inside the project's own repository so every grove
-user automatically gets the right bootstrap, agent, and completion steps — no
-per-machine setup required.
+alongside your code so every grove user automatically gets the right container,
+start commands, and agent — no per-machine setup required.
 
+```yaml
+# ── Container ──────────────────────────────────────────────────────────────────
+# Docker is required. Each instance gets its own container with the worktree
+# bind-mounted inside at `workdir`.
+#
+# Option A – single image:
+container:
+  image: ruby:3.3
+  workdir: /app         # default /app
+
+# Option B – docker-compose.yml (for projects with databases, caches, etc.):
+# container:
+#   compose: docker-compose.yml
+#   service: app        # service to exec into; default "app"
+#   workdir: /app
+
+# ── Start ──────────────────────────────────────────────────────────────────────
+# Commands run once inside the container before the agent starts.
+start:
+  - bundle install
+  - bin/rails db:create db:migrate
+
+# ── Agent ──────────────────────────────────────────────────────────────────────
+# The AI coding agent. Runs inside the container via `docker exec -it`.
+agent:
+  command: claude
+  args: []
+
+# ── Check ──────────────────────────────────────────────────────────────────────
+# Commands run concurrently by `grove check`. Run inside the container.
+# Instance returns to WAITING when all complete.
+check:
+  - bundle exec rspec
+
+# ── Finish ─────────────────────────────────────────────────────────────────────
+# Commands run by `grove finish` inside the container.
+# Use {{branch}} as a placeholder for the branch name.
+finish:
+  - git push -u origin {{branch}}
+  # - gh pr create --title "{{branch}}" --fill
 ```
-<project-repo>/
-└─ .grove/
-   └─ project.yaml      ← committed alongside your code
-```
-
-This file defines `bootstrap`, `agent`, `complete`, and `dev`. It always takes
-precedence over any values in the registration. The registration's `repo` URL
-is the only field that cannot be overridden (it is always used for cloning).
-
-If `grove start` finds no `.grove/project.yaml` and the registration has no
-agent command, it prompts you to create a boilerplate file and commit it.
 
 ---
 
@@ -107,61 +142,16 @@ agent command, it prompts you to create a boilerplate file and commit it.
 │     ├─ project.yaml   ← registration (name + repo URL)
 │     ├─ main/          ← canonical git clone
 │     └─ worktrees/
-│        └─ <id>/       ← one git worktree per instance
+│        └─ <id>/       ← one git worktree per instance (bind-mounted into container)
 ├─ instances/
 │  └─ <id>.json         ← persisted instance metadata (survives daemon restart)
 ├─ logs/
-│  └─ <id>.log          ← PTY output + bootstrap + complete command output
+│  └─ <id>.log          ← PTY output + start + finish command output
 └─ groved.sock          ← Unix domain socket
 ```
 
 Instance IDs are short and human-friendly: single characters from `1`–`9` then
 `a`–`z` (35 slots), expanding to two-character combinations as needed.
-
----
-
-## Project definition
-
-### Registration (`~/.grove/projects/<name>/project.yaml`)
-
-The registration is a lightweight pointer — just name and repo URL:
-
-```yaml
-name: my-app
-repo: git@github.com:example/my-app.git
-```
-
-### In-repo config (`.grove/project.yaml` in your project)
-
-This is the project-owned config that defines how to build and run:
-
-```yaml
-# ── Bootstrap ──────────────────────────────────────────────────────────────────
-# Commands run once in each fresh worktree before the agent starts.
-# Working directory: worktree root. Delegate to a script when possible.
-bootstrap:
-  - ./scripts/bootstrap.sh
-  # - npm install
-  # - pip install -r requirements.txt
-
-# ── Agent ──────────────────────────────────────────────────────────────────────
-# The AI coding agent to run inside each worktree PTY.
-# Common values: claude, aider, sh (plain shell, useful for testing)
-agent:
-  command: claude
-  args: []
-
-# ── Complete ───────────────────────────────────────────────────────────────────
-# Commands run by `grove finish`. Use {{branch}} for the branch name.
-# The daemon runs these to completion even if you close your terminal.
-complete:
-  - git push -u origin {{branch}}
-  # - gh pr create --title "{{branch}}" --fill
-
-# ── Dev servers (reserved, not yet implemented) ────────────────────────────────
-dev:
-  start: []
-```
 
 ---
 
@@ -189,10 +179,11 @@ grove start <project|#> <branch> [-d]
 grove attach <id>      Attach terminal to a running instance (detach: Ctrl-])
 grove stop <id>        Kill the agent; instance stays in list as KILLED
 grove restart <id> [-d]
-                         Restart the agent in the existing worktree
+                         Restart the agent in the existing worktree and container
                          Attaches immediately; use -d to skip
-grove finish <id>      Run complete commands; instance stays as FINISHED
-grove drop <id>        Delete the worktree and branch permanently (prompts first)
+grove check <id>       Run check commands concurrently; instance returns to WAITING
+grove finish <id>      Run finish commands; stop container; instance stays as FINISHED
+grove drop <id>        Delete the worktree, container, and record permanently
 grove list [--active]  List all instances (--active: exclude FINISHED)
 grove watch            Live dashboard (refreshes every second, Ctrl-C to exit)
 grove logs <id> [-f]   Print buffered output; -f to follow
@@ -220,11 +211,11 @@ grove daemon logs [-f] [-n N]
 |------------|------------------------------------------------------|
 | `RUNNING`  | Agent process is alive                               |
 | `WAITING`  | Agent is idle (no PTY output for >2 s)               |
-| `ATTACHED` | A grove client is currently attached               |
+| `ATTACHED` | A grove client is currently attached                 |
 | `EXITED`   | Agent exited cleanly (code 0)                        |
 | `CRASHED`  | Agent exited with a non-zero code                    |
-| `KILLED`   | Agent was stopped with `grove stop`                |
-| `FINISHED` | Instance completed via `grove finish`              |
+| `KILLED`   | Agent was stopped with `grove stop`                  |
+| `FINISHED` | Instance completed via `grove finish`                |
 
 State transitions:
 
@@ -239,7 +230,30 @@ EXITED/CRASHED/KILLED/FINISHED → RUNNING  (grove restart)
 
 Instances in any terminal state (`EXITED`, `CRASHED`, `KILLED`, `FINISHED`) are
 still visible in `grove list` and their worktrees are intact on disk. Use
-`grove drop <id>` to permanently delete a worktree and its record.
+`grove drop <id>` to permanently delete a worktree, stop its container, and
+remove its record.
+
+---
+
+## Container lifecycle
+
+```
+grove start   → docker run ... sleep infinity   (container starts)
+              → docker exec  start commands     (setup inside container)
+              → docker exec -it <agent>         (agent runs inside container)
+
+grove stop    → kills docker exec session       (container keeps running)
+grove restart → docker exec -it <agent>         (new session, same container)
+
+grove finish  → docker exec  finish commands    (inside container)
+              → docker compose down / docker stop+rm  (container stops)
+
+grove drop    → docker compose down / docker stop+rm  (container stops)
+              → git worktree remove
+```
+
+The container outlives individual agent sessions. `stop` + `restart` reuses the
+same container without re-running `start` commands, so restarts are fast.
 
 ---
 
@@ -247,7 +261,7 @@ still visible in `grove list` and their worktrees are intact on disk. Use
 
 `grove attach` behaves like `tmux attach`:
 
-- Your terminal is connected directly to the agent's PTY.
+- Your terminal is connected directly to the agent's PTY inside the container.
 - All keystrokes are forwarded to the agent.
 - Terminal resize events (SIGWINCH) are forwarded automatically.
 - **Detach** with **Ctrl-]** — the agent keeps running in the background.
@@ -260,60 +274,57 @@ starts. Use `-d` to skip and leave the agent running in the background.
 ## Example workflow
 
 ```bash
-# 0. Register the daemon (once, on macOS)
+# 0. Register the daemon (once, on macOS). Requires Docker to be running.
 grove daemon install
 
-# 1. Register a project (creates ~/.grove/projects/my-app/project.yaml)
+# 1. Register a project
 grove project create my-app --repo git@github.com:you/my-app.git
 
-# 2. Start an agent on a branch (by name or number from 'project list')
-#    If the repo has no .grove/project.yaml, grove will prompt you to create one.
-grove start 1 feat/dark-mode
+# 2. Start two parallel instances on different branches
+#    If the repo has no .grove/project.yaml, grove prompts you to create one.
+grove start my-app feat/dark-mode -d
+grove start my-app feat/search    -d
+# Each gets its own container — isolated databases, ports, dependencies.
+
+# 3. Attach to one
+grove attach 1
 
 # … interact with the agent, then Ctrl-] to detach …
 
-# 3. Check all instances
+# 4. Check all instances
 grove list
 
-# 4. Open a live dashboard
+# 5. Open a live dashboard
 grove watch
 
-# 5. Read logs without attaching
-grove logs 1
-grove logs 1 -f   # follow
+# 6. Run checks (tests, lint) inside the container
+grove check 1
 
-# 6. Stop the agent (keeps worktree and record)
-grove stop 1
+# 7. Read logs without attaching
+grove logs 1 -f
 
-# 7. Restart it in the same worktree
-grove restart 1
-
-# 8. Finish the work (runs complete commands: git push, gh pr create, etc.)
+# 8. Finish the work (runs finish commands inside container, then stops container)
 grove finish 1
 
 # 9. Clean up dead instances
 grove prune
 
-# 10. Permanently delete a worktree and its record
-grove drop 1
+# 10. Permanently delete a worktree, container, and record
+grove drop 2
 ```
 
 ---
 
-## Daemon management (macOS LaunchAgent only)
+## Daemon management (macOS LaunchAgent)
 
-On macOS, PTY allocation requires running inside a full user login session.
-Register `groved` as a LaunchAgent so it starts automatically at login with
-the correct privileges:
+Register `groved` as a LaunchAgent so it starts automatically at login:
 
 ```bash
 grove daemon install
 ```
 
 This writes `~/Library/LaunchAgents/com.grove.daemon.plist` and starts the
-daemon immediately. Daemon output is written to `~/.grove/daemon.log`.
-
-Useful for debugging startup/clone errors:
+daemon immediately. Daemon output goes to `~/.grove/daemon.log`.
 
 ```bash
 grove daemon logs -n 100      # last 100 lines
@@ -322,22 +333,39 @@ grove daemon logs -f          # follow new lines
 
 > **Note:** `grove` also auto-starts the daemon on demand when you run any
 > command that requires it. The LaunchAgent approach is preferred on macOS
-> because it avoids PTY permission errors that occur when launching a detached
-> background process directly.
+> because it avoids PTY permission errors from launching a detached process
+> directly.
 
 Instance metadata is persisted to `~/.grove/instances/<id>.json`. When the
 daemon restarts, all instances reload with their last known state. Instances
 that were live when the daemon was killed are marked `CRASHED` on reload.
+Orphaned containers (from instances that were live at daemon kill time) remain
+until `grove drop` is called.
 
 ---
 
 ## Platform support
 
-Grove runs on macOS and Linux. Unix domain sockets, PTY allocation
-(`github.com/creack/pty`), and process group signals work on both.
+Grove runs on macOS and Linux. Docker is required on both.
 
 The `grove daemon install/uninstall/status` commands are **macOS-only** — they
-use `launchctl` and `~/Library/LaunchAgents/` to register `groved` as a login
-service. On Linux, start `groved` manually or wire it into systemd (or any
-other init system); `grove` will auto-start the daemon on demand for the
-current session regardless.
+use `launchctl` and `~/Library/LaunchAgents/`. On Linux, start `groved`
+manually or wire it into systemd; `grove` will auto-start the daemon on demand
+for the current session regardless.
+
+## What works well with Grove
+
+Grove is a good fit for any project where parallel instances are meaningful —
+i.e. where you could run parallel CI jobs on GitHub Actions:
+
+- Web apps with databases (Rails, Django, Laravel) — each instance gets its own isolated database via compose
+- Node / Python / Go / Rust services
+- Anything with a `docker-compose.yml`
+
+Grove is **not** a good fit for:
+
+- **iOS / macOS app development** — Xcode, the iOS Simulator, and code signing
+  are macOS-only and cannot run inside a Linux container. Parallel instances
+  also conflict on the simulator regardless of containers.
+- **Projects that own global host resources** — daemon processes that bind
+  fixed host ports or sockets outside the container.
