@@ -11,10 +11,20 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// ContainerConfig holds the Docker container or Compose settings for a project.
+type ContainerConfig struct {
+	Image   string `yaml:"image"`   // single container image (e.g. "ruby:3.3")
+	Compose string `yaml:"compose"` // path to docker-compose.yml (relative to repo root)
+	Service string `yaml:"service"` // compose service to exec into; default "app"
+	Workdir string `yaml:"workdir"` // working directory inside container; default "/app"
+}
+
 // Project holds the parsed contents of a project.yaml file.
 type Project struct {
 	Name string `yaml:"name"`
 	Repo string `yaml:"repo"`
+
+	Container ContainerConfig `yaml:"container"`
 
 	Start  []string `yaml:"start"`
 	Finish []string `yaml:"finish"`
@@ -29,6 +39,22 @@ type Project struct {
 	// canonical clone (main/), and worktrees (worktrees/).
 	// Always set to <daemonRoot>/projects/<name>.
 	DataDir string `yaml:"-"`
+}
+
+// containerWorkdir returns the working directory to use inside the container.
+func (p *Project) containerWorkdir() string {
+	if p.Container.Workdir != "" {
+		return p.Container.Workdir
+	}
+	return "/app"
+}
+
+// containerService returns the compose service name to exec into.
+func (p *Project) containerService() string {
+	if p.Container.Service != "" {
+		return p.Container.Service
+	}
+	return "app"
 }
 
 // MainDir returns the path of the canonical checkout for this project.
@@ -189,6 +215,9 @@ func loadInRepoConfig(p *Project) (bool, error) {
 	}
 
 	// Overlay: in-repo values win over the registration for each field present.
+	if overlay.Container != (ContainerConfig{}) {
+		p.Container = overlay.Container
+	}
 	if len(overlay.Start) > 0 {
 		p.Start = overlay.Start
 	}
@@ -205,16 +234,12 @@ func loadInRepoConfig(p *Project) (bool, error) {
 	return true, nil
 }
 
-// runStart executes the project start commands sequentially in dir.
+// runStart executes the project start commands sequentially inside the container.
 // All output is written to w.
-func runStart(p *Project, dir string, w io.Writer) error {
+func runStart(p *Project, containerName string, w io.Writer) error {
 	for _, cmdStr := range p.Start {
 		fmt.Fprintf(w, "Start: %s\n", cmdStr)
-		cmd := exec.Command("sh", "-c", cmdStr)
-		cmd.Dir = dir
-		cmd.Stdout = w
-		cmd.Stderr = w
-		if err := cmd.Run(); err != nil {
+		if err := execInContainer(containerName, cmdStr, w); err != nil {
 			return fmt.Errorf("start %q: %w", cmdStr, err)
 		}
 	}

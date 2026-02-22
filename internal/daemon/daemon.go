@@ -39,7 +39,12 @@ type Daemon struct {
 
 // New creates a Daemon that uses rootDir (~/.grove) as its data directory.
 // Project registrations are read from rootDir/projects/<name>/project.yaml.
+// Returns an error if Docker is not available.
 func New(rootDir string) (*Daemon, error) {
+	if err := validateDocker(); err != nil {
+		return nil, err
+	}
+
 	for _, sub := range []string{
 		"projects",
 		"instances",
@@ -231,8 +236,23 @@ func (d *Daemon) handleStart(conn net.Conn, req proto.Request) {
 		return
 	}
 
-	// Run start commands in the new worktree.
-	if err := runStart(p, worktreeDir, setupW); err != nil {
+	// Start the container with the worktree bind-mounted inside it.
+	containerName, err := startContainer(p, instanceID, worktreeDir, setupW)
+	if err != nil {
+		removeWorktree(p, instanceID, req.Branch)
+		log.Printf("start failed: stage=container project=%s branch=%s instance=%s worktree=%s elapsed=%s err=%v",
+			req.Project, req.Branch, instanceID, worktreeDir, time.Since(startedAt).Round(time.Millisecond), err)
+		respond(conn, proto.Response{OK: false, Error: err.Error()})
+		return
+	}
+	composeProject := ""
+	if p.Container.Compose != "" {
+		composeProject = "grove-" + instanceID
+	}
+
+	// Run start commands inside the container.
+	if err := runStart(p, containerName, setupW); err != nil {
+		stopContainer(containerName, composeProject)
 		removeWorktree(p, instanceID, req.Branch)
 		log.Printf("start failed: stage=start project=%s branch=%s instance=%s worktree=%s elapsed=%s err=%v",
 			req.Project, req.Branch, instanceID, worktreeDir, time.Since(startedAt).Round(time.Millisecond), err)
@@ -241,22 +261,25 @@ func (d *Daemon) handleStart(conn net.Conn, req proto.Request) {
 	}
 
 	inst := &Instance{
-		ID:           instanceID,
-		Project:      req.Project,
-		Branch:       req.Branch,
-		WorktreeDir:  worktreeDir,
-		CreatedAt:    time.Now(),
-		LogFile:      logFile,
-		state:        proto.StateRunning,
-		InstancesDir: filepath.Join(d.rootDir, "instances"),
+		ID:             instanceID,
+		Project:        req.Project,
+		Branch:         req.Branch,
+		WorktreeDir:    worktreeDir,
+		CreatedAt:      time.Now(),
+		LogFile:        logFile,
+		state:          proto.StateRunning,
+		InstancesDir:   filepath.Join(d.rootDir, "instances"),
+		ContainerID:    containerName,
+		ComposeProject: composeProject,
 	}
 
-	// Start the agent in a PTY.
+	// Start the agent in a PTY via docker exec.
 	agentCmd := p.Agent.Command
 	if agentCmd == "" {
 		agentCmd = "sh" // fallback for testing
 	}
 	if err := inst.startAgent(agentCmd, p.Agent.Args); err != nil {
+		stopContainer(containerName, composeProject)
 		removeWorktree(p, instanceID, req.Branch)
 		log.Printf("start failed: stage=agent-launch project=%s branch=%s instance=%s worktree=%s elapsed=%s err=%v",
 			req.Project, req.Branch, instanceID, worktreeDir, time.Since(startedAt).Round(time.Millisecond), err)
@@ -414,8 +437,14 @@ func (d *Daemon) handleDrop(conn net.Conn, req proto.Request) {
 
 	worktreeDir := inst.WorktreeDir
 	branch := inst.Branch
+	containerID := inst.ContainerID
+	composeProject := inst.ComposeProject
 
+	// Kill the docker exec session (container keeps running until stopContainer).
 	inst.destroy()
+
+	// Stop and remove the container (or compose stack).
+	stopContainer(containerID, composeProject)
 
 	// Derive mainDir: worktreeDir is <dataDir>/worktrees/<id>, so main is <dataDir>/main.
 	mainDir := filepath.Join(filepath.Dir(filepath.Dir(worktreeDir)), "main")
@@ -474,9 +503,14 @@ func (d *Daemon) handleFinish(conn net.Conn, req proto.Request) {
 	p, err := loadProject(d.rootDir, projectName)
 	if err != nil {
 		fmt.Fprintf(conn, "warning: could not load project to run finish commands: %v\n", err)
+		stopContainer(inst.ContainerID, inst.ComposeProject)
 		return
 	}
+	if _, err := loadInRepoConfig(p); err != nil {
+		log.Printf("warning: could not read in-repo config for %s: %v", projectName, err)
+	}
 	if len(p.Finish) == 0 {
+		stopContainer(inst.ContainerID, inst.ComposeProject)
 		return
 	}
 
@@ -492,19 +526,21 @@ func (d *Daemon) handleFinish(conn net.Conn, req proto.Request) {
 	// receiving output and commands run to completion.
 	w := newResilientWriter(conn, logFd)
 
+	containerID := inst.ContainerID
+	composeProject := inst.ComposeProject
+
 	for _, cmdStr := range p.Finish {
 		expanded := strings.ReplaceAll(cmdStr, "{{branch}}", branch)
 		fmt.Fprintf(w, "$ %s\n", expanded)
-		c := exec.Command("sh", "-c", expanded)
-		c.Dir = worktreeDir
-		c.Stdout = w
-		c.Stderr = w
-		if err := c.Run(); err != nil {
+		if err := execInContainer(containerID, expanded, w); err != nil {
 			fmt.Fprintf(w, "error: command failed: %v\n", err)
 			log.Printf("instance %s: finish command failed: %v", inst.ID, err)
+			stopContainer(containerID, composeProject)
 			return
 		}
 	}
+
+	stopContainer(containerID, composeProject)
 }
 
 func (d *Daemon) handleCheck(conn net.Conn, req proto.Request) {
@@ -514,7 +550,6 @@ func (d *Daemon) handleCheck(conn net.Conn, req proto.Request) {
 		return
 	}
 
-	worktreeDir := inst.WorktreeDir
 	projectName := inst.Project
 
 	inst.mu.Lock()
@@ -559,17 +594,15 @@ func (d *Daemon) handleCheck(conn net.Conn, req proto.Request) {
 
 	w := newResilientWriter(conn, logFd)
 
+	containerID := inst.ContainerID
+
 	var wg sync.WaitGroup
 	for _, cmdStr := range p.Check {
 		wg.Add(1)
 		go func(cmd string) {
 			defer wg.Done()
 			fmt.Fprintf(w, "$ %s\n", cmd)
-			c := exec.Command("sh", "-c", cmd)
-			c.Dir = worktreeDir
-			c.Stdout = w
-			c.Stderr = w
-			if err := c.Run(); err != nil {
+			if err := execInContainer(containerID, cmd, w); err != nil {
 				fmt.Fprintf(w, "error: check command failed: %v\n", err)
 				log.Printf("instance %s: check command %q failed: %v", inst.ID, cmd, err)
 			}
@@ -704,15 +737,17 @@ func (d *Daemon) loadPersistedInstances() error {
 		}
 
 		inst := &Instance{
-			ID:           info.ID,
-			Project:      info.Project,
-			Branch:       info.Branch,
-			WorktreeDir:  info.WorktreeDir,
-			CreatedAt:    time.Unix(info.CreatedAt, 0),
-			LogFile:      filepath.Join(d.rootDir, "logs", info.ID+".log"),
-			state:        state,
-			endedAt:      endedAt,
-			InstancesDir: instancesDir,
+			ID:             info.ID,
+			Project:        info.Project,
+			Branch:         info.Branch,
+			WorktreeDir:    info.WorktreeDir,
+			CreatedAt:      time.Unix(info.CreatedAt, 0),
+			LogFile:        filepath.Join(d.rootDir, "logs", info.ID+".log"),
+			state:          state,
+			endedAt:        endedAt,
+			InstancesDir:   instancesDir,
+			ContainerID:    info.ContainerID,
+			ComposeProject: info.ComposeProject,
 		}
 		d.instances[info.ID] = inst
 

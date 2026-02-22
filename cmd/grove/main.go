@@ -425,6 +425,24 @@ const projectConfigBoilerplate = `# .grove/project.yaml
 # https://github.com/ianremillard/grove
 # ─────────────────────────────────────────────────────────────────────────────
 
+# ── Container ─────────────────────────────────────────────────────────────────
+# Docker is required.  Each agent instance runs in its own container with the
+# git worktree bind-mounted inside.
+#
+# Option A – single image (no external services):
+#   container:
+#     image: ruby:3.3      # any Docker image
+#     workdir: /app        # working directory inside the container (default /app)
+#
+# Option B – docker-compose.yml (databases, caches, etc.):
+#   container:
+#     compose: docker-compose.yml   # path relative to repo root
+#     service: app                  # service to exec into (default: app)
+#     workdir: /app
+#
+container:
+  image: ubuntu:24.04
+
 # ── Start ─────────────────────────────────────────────────────────────────────
 # Commands run once in each fresh worktree before the agent starts.
 # The working directory is the worktree root.

@@ -52,14 +52,16 @@ type Request struct {
 
 // InstanceInfo is a point-in-time snapshot of an instance's metadata.
 type InstanceInfo struct {
-	ID          string `json:"id"`
-	Project     string `json:"project"`
-	State       string `json:"state"`
-	Branch      string `json:"branch"`
-	WorktreeDir string `json:"worktree_dir"`
-	CreatedAt   int64  `json:"created_at"`
-	EndedAt     int64  `json:"ended_at,omitempty"` // unix timestamp; 0 if still running
-	PID         int    `json:"pid"`
+	ID             string `json:"id"`
+	Project        string `json:"project"`
+	State          string `json:"state"`
+	Branch         string `json:"branch"`
+	WorktreeDir    string `json:"worktree_dir"`
+	CreatedAt      int64  `json:"created_at"`
+	EndedAt        int64  `json:"ended_at,omitempty"` // unix timestamp; 0 if still running
+	PID            int    `json:"pid"`
+	ContainerID    string `json:"container_id,omitempty"`
+	ComposeProject string `json:"compose_project,omitempty"`
 }
 
 // Response is the JSON payload returned by the daemon for all non-attach commands.

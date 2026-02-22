@@ -53,12 +53,14 @@ const (
 // Instance represents one running (or stopped) agent session.
 type Instance struct {
 	// Immutable after creation.
-	ID          string
-	Project     string
-	Branch      string
-	WorktreeDir string
-	CreatedAt   time.Time
-	LogFile     string // path to the on-disk log file
+	ID             string
+	Project        string
+	Branch         string
+	WorktreeDir    string
+	CreatedAt      time.Time
+	LogFile        string // path to the on-disk log file
+	ContainerID    string // exec target ("grove-1" or "grove-1-app-1")
+	ComposeProject string // "grove-<id>" if compose mode; empty if single container
 
 	// Mutable; protected by mu.
 	mu             sync.Mutex
@@ -102,14 +104,16 @@ func (inst *Instance) Info() proto.InstanceInfo {
 		endedAt = inst.endedAt.Unix()
 	}
 	return proto.InstanceInfo{
-		ID:          inst.ID,
-		Project:     inst.Project,
-		State:       state,
-		Branch:      inst.Branch,
-		WorktreeDir: inst.WorktreeDir,
-		CreatedAt:   inst.CreatedAt.Unix(),
-		EndedAt:     endedAt,
-		PID:         inst.pid,
+		ID:             inst.ID,
+		Project:        inst.Project,
+		State:          state,
+		Branch:         inst.Branch,
+		WorktreeDir:    inst.WorktreeDir,
+		CreatedAt:      inst.CreatedAt.Unix(),
+		EndedAt:        endedAt,
+		PID:            inst.pid,
+		ContainerID:    inst.ContainerID,
+		ComposeProject: inst.ComposeProject,
 	}
 }
 
@@ -121,29 +125,26 @@ func (inst *Instance) persistMeta(instancesDir string) {
 	_ = os.WriteFile(path, data, 0o644)
 }
 
-// startAgent allocates a PTY, starts the agent process inside it, and
-// launches the background goroutine that drains PTY output into logBuf.
+// startAgent allocates a PTY, starts the agent inside the instance's container
+// via "docker exec -it", and launches the background goroutine that drains PTY
+// output into logBuf.
 //
-// The agent process is placed in its own process group so that destroy()
-// can cleanly kill the whole group.
+// destroy() kills the docker exec process; the container keeps running so that
+// restart works by starting a new docker exec in the same container.
 func (inst *Instance) startAgent(agentCmd string, agentArgs []string) error {
-	cmd := exec.Command(agentCmd, agentArgs...)
-	cmd.Dir = inst.WorktreeDir
-	// bash in sh mode resets PS1 to \s-\v\$ during initialisation, ignoring
-	// whatever is in the environment.  PROMPT_COMMAND is evaluated before every
-	// prompt and is NOT reset in sh mode, so it reliably overrides PS1 after
-	// all startup files have run.  Agents like claude/aider ignore both
-	// variables, so this has no effect on them.
+	// bash in sh mode resets PS1 during initialisation; PROMPT_COMMAND fires
+	// before every prompt and is not reset, so it reliably overrides PS1 for
+	// shell sessions.  Agents like claude/aider ignore both variables.
 	ps1 := fmt.Sprintf("\033[2m%s/%s\033[0m $ ", inst.Project, inst.Branch)
-	// Set PS1 then clear PROMPT_COMMAND so it only fires once.
 	promptCmd := `PS1="` + ps1 + `"; unset PROMPT_COMMAND`
-	cmd.Env = envWith(os.Environ(), "TERM=xterm-256color", "PROMPT_COMMAND="+promptCmd)
 
-	// pty.Start sets Setsid:true on the child, which creates a new session and
-	// process group (PGID = child PID).  Do NOT also set Setpgid here: calling
-	// setpgid() after setsid() on the session leader returns EPERM on macOS,
-	// which propagates back as "fork/exec: operation not permitted".
-	// The new session group already gives us kill(-pid, SIGKILL) semantics.
+	dockerArgs := []string{"exec", "-it",
+		"-e", "TERM=xterm-256color",
+		"-e", "PROMPT_COMMAND=" + promptCmd,
+		inst.ContainerID, agentCmd}
+	dockerArgs = append(dockerArgs, agentArgs...)
+	cmd := exec.Command("docker", dockerArgs...)
+	// No cmd.Dir or cmd.Env — handled by the container.
 
 	// Start the command attached to a new PTY.
 	ptm, err := pty.Start(cmd)
