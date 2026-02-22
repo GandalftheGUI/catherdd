@@ -799,7 +799,7 @@ func drawWatch(fd int, socketPath string) {
 		`      \dou/  /douUP`,
 		`        \\\\///`,
 		`         |||||`,
-		`         |||||`,
+		`         |ILR|`,
 		`         |||||`,
 		`   .....//||||\....`,
 	}

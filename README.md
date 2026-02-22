@@ -297,7 +297,7 @@ grove drop 1
 
 ---
 
-## Daemon management (macOS LaunchAgent)
+## Daemon management (macOS LaunchAgent only)
 
 On macOS, PTY allocation requires running inside a full user login session.
 Register `groved` as a LaunchAgent so it starts automatically at login with
@@ -328,11 +328,13 @@ that were live when the daemon was killed are marked `CRASHED` on reload.
 
 ---
 
-## macOS only
+## Platform support
 
-groved targets macOS. It uses:
+Grove runs on macOS and Linux. Unix domain sockets, PTY allocation
+(`github.com/creack/pty`), and process group signals work on both.
 
-- Unix domain sockets for IPC
-- `posix_openpt` / `openpty` (via `github.com/creack/pty`) for PTY allocation
-- `SIGKILL` on the process group for clean teardown
-- `launchd` for daemon lifecycle management
+The `grove daemon install/uninstall/status` commands are **macOS-only** — they
+use `launchctl` and `~/Library/LaunchAgents/` to register `groved` as a login
+service. On Linux, start `groved` manually or wire it into systemd (or any
+other init system); `grove` will auto-start the daemon on demand for the
+current session regardless.
