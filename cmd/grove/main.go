@@ -64,6 +64,8 @@ func main() {
 		cmdDrop()
 	case "finish":
 		cmdFinish()
+	case "check":
+		cmdCheck()
 	case "prune":
 		cmdPrune()
 	case "dir":
@@ -94,7 +96,8 @@ Instance commands:
   attach <instance-id>           Attach terminal to an instance (detach: Ctrl-])
   stop <instance-id>             Kill the agent; instance stays in list as KILLED
   restart <instance-id> [-d]     Restart agent in existing worktree (attaches immediately; -d to skip)
-  finish <instance-id>           Run completion steps; instance stays as FINISHED
+  check <instance-id>            Run check commands concurrently; instance returns to WAITING
+  finish <instance-id>           Run finish steps; instance stays as FINISHED
   drop <instance-id>             Delete the worktree and branch permanently
   list [--active]                List all instances (--active: exclude FINISHED)
   logs <instance-id> [-f]        Print buffered output for an instance
@@ -422,7 +425,7 @@ const projectConfigBoilerplate = `# .grove/project.yaml
 # https://github.com/ianremillard/grove
 # ─────────────────────────────────────────────────────────────────────────────
 
-# ── Bootstrap ─────────────────────────────────────────────────────────────────
+# ── Start ─────────────────────────────────────────────────────────────────────
 # Commands run once in each fresh worktree before the agent starts.
 # The working directory is the worktree root.
 #
@@ -435,7 +438,7 @@ const projectConfigBoilerplate = `# .grove/project.yaml
 #   - npm install
 #   - pip install -r requirements.txt && pre-commit install
 #   - bundle install
-bootstrap:
+start:
   - ./scripts/bootstrap.sh
 
 # ── Agent ─────────────────────────────────────────────────────────────────────
@@ -450,7 +453,22 @@ agent:
   command: claude
   args: []
 
-# ── Complete ──────────────────────────────────────────────────────────────────
+# ── Check ─────────────────────────────────────────────────────────────────────
+# Commands run concurrently by 'grove check <id>' inside the worktree directory.
+# The daemon executes these while the agent stays alive; the instance returns to
+# WAITING when all commands complete.
+#
+# Use these for verification steps: running tests, linting, type-checking, or
+# starting a dev server to inspect the agent's work.
+#
+# Examples:
+#   - npm test
+#   - go test ./...
+#   - make lint
+check:
+  - npm test
+
+# ── Finish ────────────────────────────────────────────────────────────────────
 # Commands run by 'grove finish <id>' inside the worktree directory.
 # The daemon executes these — they complete even if you close your terminal.
 # Use {{branch}} as a placeholder for the instance's branch name.
@@ -459,11 +477,11 @@ agent:
 # does not leave it in a broken state; output is preserved in the instance log.
 #
 # Tip: for anything beyond a simple push, delegate to a script so you can test
-# the completion flow independently.
+# the finish flow independently.
 #
-#   - ./scripts/complete.sh {{branch}}
+#   - ./scripts/finish.sh {{branch}}
 #
-complete:
+finish:
   # Push the branch to the remote.
   - git push -u origin {{branch}}
 
@@ -472,12 +490,6 @@ complete:
 
   # Or push, open a PR, squash-merge, and delete the branch in one step.
   # - git push -u origin {{branch}} && gh pr create --title "{{branch}}" --fill && gh pr merge --squash --delete-branch
-
-# ── Dev servers ───────────────────────────────────────────────────────────────
-# Commands to start development servers alongside the agent.
-# (Reserved for future use — not yet implemented.)
-dev:
-  start: []
 `
 
 func cmdList() {
@@ -917,6 +929,8 @@ func colorState(state string) string {
 		return "\033[33m"
 	case "ATTACHED":
 		return "\033[36m"
+	case "CHECKING":
+		return "\033[36m"
 	case "EXITED":
 		return "\033[2m"
 	case "CRASHED":
@@ -1058,6 +1072,40 @@ func cmdFinish() {
 	}
 
 	// Stream complete command output from the daemon.
+	io.Copy(os.Stdout, conn)
+}
+
+func cmdCheck() {
+	if len(os.Args) < 3 {
+		fmt.Fprintln(os.Stderr, "usage: grove check <instance-id>")
+		os.Exit(1)
+	}
+	instanceID := os.Args[2]
+
+	socketPath := daemonSocket()
+	conn, err := net.Dial("unix", socketPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "grove: %v\n", err)
+		os.Exit(1)
+	}
+	defer conn.Close()
+
+	if err := writeRequest(conn, proto.Request{Type: proto.ReqCheck, InstanceID: instanceID}); err != nil {
+		fmt.Fprintf(os.Stderr, "grove: %v\n", err)
+		os.Exit(1)
+	}
+
+	resp, err := readResponse(conn)
+	if err != nil || !resp.OK {
+		msg := resp.Error
+		if msg == "" && err != nil {
+			msg = err.Error()
+		}
+		fmt.Fprintf(os.Stderr, "grove: %s\n", msg)
+		os.Exit(1)
+	}
+
+	// Stream check command output from the daemon.
 	io.Copy(os.Stdout, conn)
 }
 

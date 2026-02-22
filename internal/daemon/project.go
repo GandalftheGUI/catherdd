@@ -16,17 +16,14 @@ type Project struct {
 	Name string `yaml:"name"`
 	Repo string `yaml:"repo"`
 
-	Bootstrap []string `yaml:"bootstrap"`
-	Complete  []string `yaml:"complete"`
+	Start  []string `yaml:"start"`
+	Finish []string `yaml:"finish"`
+	Check  []string `yaml:"check"`
 
 	Agent struct {
 		Command string   `yaml:"command"`
 		Args    []string `yaml:"args"`
 	} `yaml:"agent"`
-
-	Dev struct {
-		Start []string `yaml:"start"`
-	} `yaml:"dev"`
 
 	// DataDir is where all project data lives: registration (project.yaml),
 	// canonical clone (main/), and worktrees (worktrees/).
@@ -50,6 +47,8 @@ func (p *Project) WorktreeDir(instanceID string) string {
 }
 
 // loadProject reads the project registration from <dataRoot>/projects/<name>/project.yaml.
+// The registration only carries name and repo — all other config (bootstrap, agent,
+// complete) comes exclusively from the in-repo .grove/project.yaml.
 func loadProject(dataRoot, name string) (*Project, error) {
 	projectDir := filepath.Join(dataRoot, "projects", name)
 	yamlPath := filepath.Join(projectDir, "project.yaml")
@@ -61,15 +60,23 @@ func loadProject(dataRoot, name string) (*Project, error) {
 		return nil, fmt.Errorf("read project.yaml: %w", err)
 	}
 
-	var p Project
-	if err := yaml.Unmarshal(data, &p); err != nil {
+	var reg struct {
+		Name string `yaml:"name"`
+		Repo string `yaml:"repo"`
+	}
+	if err := yaml.Unmarshal(data, &reg); err != nil {
 		return nil, fmt.Errorf("parse project.yaml: %w", err)
+	}
+
+	p := &Project{
+		Name:    reg.Name,
+		Repo:    reg.Repo,
+		DataDir: projectDir,
 	}
 	if p.Name == "" {
 		p.Name = name
 	}
-	p.DataDir = projectDir
-	return &p, nil
+	return p, nil
 }
 
 // ensureMainCheckout clones the project repo into the main directory if it
@@ -182,33 +189,33 @@ func loadInRepoConfig(p *Project) (bool, error) {
 	}
 
 	// Overlay: in-repo values win over the registration for each field present.
-	if len(overlay.Bootstrap) > 0 {
-		p.Bootstrap = overlay.Bootstrap
+	if len(overlay.Start) > 0 {
+		p.Start = overlay.Start
 	}
 	if overlay.Agent.Command != "" {
 		p.Agent = overlay.Agent
 	}
-	if len(overlay.Complete) > 0 {
-		p.Complete = overlay.Complete
+	if len(overlay.Finish) > 0 {
+		p.Finish = overlay.Finish
 	}
-	if len(overlay.Dev.Start) > 0 {
-		p.Dev = overlay.Dev
+	if len(overlay.Check) > 0 {
+		p.Check = overlay.Check
 	}
 
 	return true, nil
 }
 
-// runBootstrap executes the project bootstrap commands sequentially in dir.
+// runStart executes the project start commands sequentially in dir.
 // All output is written to w.
-func runBootstrap(p *Project, dir string, w io.Writer) error {
-	for _, cmdStr := range p.Bootstrap {
-		fmt.Fprintf(w, "Bootstrap: %s\n", cmdStr)
+func runStart(p *Project, dir string, w io.Writer) error {
+	for _, cmdStr := range p.Start {
+		fmt.Fprintf(w, "Start: %s\n", cmdStr)
 		cmd := exec.Command("sh", "-c", cmdStr)
 		cmd.Dir = dir
 		cmd.Stdout = w
 		cmd.Stderr = w
 		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("bootstrap %q: %w", cmdStr, err)
+			return fmt.Errorf("start %q: %w", cmdStr, err)
 		}
 	}
 	return nil

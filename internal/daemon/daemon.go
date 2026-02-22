@@ -132,6 +132,9 @@ func (d *Daemon) handleConn(conn net.Conn) {
 	case proto.ReqFinish:
 		d.handleFinish(conn, req)
 
+	case proto.ReqCheck:
+		d.handleCheck(conn, req)
+
 	case proto.ReqRestart:
 		d.handleRestart(conn, req)
 
@@ -207,10 +210,10 @@ func (d *Daemon) handleStart(conn net.Conn, req proto.Request) {
 		log.Printf("warning: could not read in-repo config for %s: %v", req.Project, err)
 	}
 
-	// If there is no in-repo config and the registration has no agent command,
-	// the project is not configured enough to start.  Tell the client so it
-	// can prompt the user to create .grove/project.yaml.
-	if !inRepoFound && p.Agent.Command == "" {
+	// If there is no in-repo config the project is not configured enough to
+	// start.  Tell the client so it can prompt the user to create
+	// .grove/project.yaml.
+	if !inRepoFound {
 		respond(conn, proto.Response{
 			OK:       false,
 			Error:    "no .grove/project.yaml found in " + req.Project,
@@ -228,10 +231,10 @@ func (d *Daemon) handleStart(conn net.Conn, req proto.Request) {
 		return
 	}
 
-	// Run bootstrap commands in the new worktree.
-	if err := runBootstrap(p, worktreeDir, setupW); err != nil {
+	// Run start commands in the new worktree.
+	if err := runStart(p, worktreeDir, setupW); err != nil {
 		removeWorktree(p, instanceID, req.Branch)
-		log.Printf("start failed: stage=bootstrap project=%s branch=%s instance=%s worktree=%s elapsed=%s err=%v",
+		log.Printf("start failed: stage=start project=%s branch=%s instance=%s worktree=%s elapsed=%s err=%v",
 			req.Project, req.Branch, instanceID, worktreeDir, time.Since(startedAt).Round(time.Millisecond), err)
 		respond(conn, proto.Response{OK: false, Error: err.Error()})
 		return
@@ -470,14 +473,14 @@ func (d *Daemon) handleFinish(conn net.Conn, req proto.Request) {
 
 	p, err := loadProject(d.rootDir, projectName)
 	if err != nil {
-		fmt.Fprintf(conn, "warning: could not load project to run complete commands: %v\n", err)
+		fmt.Fprintf(conn, "warning: could not load project to run finish commands: %v\n", err)
 		return
 	}
-	if len(p.Complete) == 0 {
+	if len(p.Finish) == 0 {
 		return
 	}
 
-	// Open the instance log file for appending so complete command output is
+	// Open the instance log file for appending so finish command output is
 	// preserved even if the client disconnects mid-way.
 	logFd, _ := os.OpenFile(inst.LogFile, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0o644)
 	if logFd != nil {
@@ -489,7 +492,7 @@ func (d *Daemon) handleFinish(conn net.Conn, req proto.Request) {
 	// receiving output and commands run to completion.
 	w := newResilientWriter(conn, logFd)
 
-	for _, cmdStr := range p.Complete {
+	for _, cmdStr := range p.Finish {
 		expanded := strings.ReplaceAll(cmdStr, "{{branch}}", branch)
 		fmt.Fprintf(w, "$ %s\n", expanded)
 		c := exec.Command("sh", "-c", expanded)
@@ -498,10 +501,81 @@ func (d *Daemon) handleFinish(conn net.Conn, req proto.Request) {
 		c.Stderr = w
 		if err := c.Run(); err != nil {
 			fmt.Fprintf(w, "error: command failed: %v\n", err)
-			log.Printf("instance %s: complete command failed: %v", inst.ID, err)
+			log.Printf("instance %s: finish command failed: %v", inst.ID, err)
 			return
 		}
 	}
+}
+
+func (d *Daemon) handleCheck(conn net.Conn, req proto.Request) {
+	inst := d.getInstance(req.InstanceID)
+	if inst == nil {
+		respond(conn, proto.Response{OK: false, Error: "instance not found: " + req.InstanceID})
+		return
+	}
+
+	worktreeDir := inst.WorktreeDir
+	projectName := inst.Project
+
+	inst.mu.Lock()
+	state := inst.state
+	switch state {
+	case proto.StateFinished, proto.StateExited, proto.StateCrashed, proto.StateKilled, proto.StateChecking:
+		inst.mu.Unlock()
+		respond(conn, proto.Response{OK: false, Error: "cannot check: instance is " + state})
+		return
+	default:
+		inst.state = proto.StateChecking
+		inst.mu.Unlock()
+	}
+
+	defer func() {
+		inst.mu.Lock()
+		if inst.state == proto.StateChecking {
+			inst.state = proto.StateWaiting
+		}
+		inst.mu.Unlock()
+	}()
+
+	p, err := loadProject(d.rootDir, projectName)
+	if err != nil {
+		respond(conn, proto.Response{OK: false, Error: err.Error()})
+		return
+	}
+	if _, err := loadInRepoConfig(p); err != nil {
+		log.Printf("warning: could not read in-repo config for %s: %v", projectName, err)
+	}
+	if len(p.Check) == 0 {
+		respond(conn, proto.Response{OK: false, Error: "no check commands defined in .grove/project.yaml"})
+		return
+	}
+
+	respond(conn, proto.Response{OK: true})
+
+	logFd, _ := os.OpenFile(inst.LogFile, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0o644)
+	if logFd != nil {
+		defer logFd.Close()
+	}
+
+	w := newResilientWriter(conn, logFd)
+
+	var wg sync.WaitGroup
+	for _, cmdStr := range p.Check {
+		wg.Add(1)
+		go func(cmd string) {
+			defer wg.Done()
+			fmt.Fprintf(w, "$ %s\n", cmd)
+			c := exec.Command("sh", "-c", cmd)
+			c.Dir = worktreeDir
+			c.Stdout = w
+			c.Stderr = w
+			if err := c.Run(); err != nil {
+				fmt.Fprintf(w, "error: check command failed: %v\n", err)
+				log.Printf("instance %s: check command %q failed: %v", inst.ID, cmd, err)
+			}
+		}(cmdStr)
+	}
+	wg.Wait()
 }
 
 func (d *Daemon) handleRestart(conn net.Conn, req proto.Request) {

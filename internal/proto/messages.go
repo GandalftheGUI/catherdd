@@ -27,6 +27,7 @@ const (
 	ReqDrop       = "drop"
 	ReqFinish     = "finish"
 	ReqRestart    = "restart"
+	ReqCheck      = "check"
 )
 
 // Instance state constants.
@@ -38,6 +39,7 @@ const (
 	StateCrashed  = "CRASHED"
 	StateKilled   = "KILLED"
 	StateFinished = "FINISHED"
+	StateChecking = "CHECKING"
 )
 
 // Request is the JSON payload sent from grove to groved.
