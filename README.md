@@ -175,7 +175,8 @@ grove project create <name> [--repo <url>]
 grove project list     List registered projects (numbered)
 grove project delete <name|#>
                       Remove a project and all its worktrees (prompts to confirm)
-grove main <project>   Print the main checkout path for a project
+grove project dir <name|#>
+                      Print the main checkout path for a project
 ```
 
 ### Instance commands
@@ -195,7 +196,7 @@ grove drop <id>        Delete the worktree and branch permanently (prompts first
 grove list [--active]  List all instances (--active: exclude FINISHED)
 grove watch            Live dashboard (refreshes every second, Ctrl-C to exit)
 grove logs <id> [-f]   Print buffered output; -f to follow
-grove worktree <id>    Print the worktree path for an instance
+grove dir <id>         Print the worktree path for an instance
 grove prune [--finished]
                          Drop all EXITED/CRASHED/KILLED instances
                          (--finished: also include FINISHED)

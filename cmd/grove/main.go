@@ -66,10 +66,8 @@ func main() {
 		cmdFinish()
 	case "prune":
 		cmdPrune()
-	case "worktree":
-		cmdWorktree()
-	case "main":
-		cmdMain()
+	case "dir":
+		cmdDir()
 	case "daemon":
 		cmdDaemon()
 	default:
@@ -87,7 +85,7 @@ Project commands:
                            Register a new project (name + repo URL)
   project list             List registered projects (numbered)
   project delete <name|#>  Remove a project and all its worktrees
-  main <project|#>           Print the main checkout path for a project
+  project dir <name|#>     Print the main checkout path for a project
 
 Instance commands:
   start <project|#> <branch> [-d]
@@ -102,7 +100,7 @@ Instance commands:
   logs <instance-id> [-f]        Print buffered output for an instance
   watch                          Live dashboard (refreshes every second, Ctrl-C to exit)
   prune [--finished]             Drop all exited/crashed instances (--finished: also FINISHED)
-  worktree <instance-id>         Print the worktree path for an instance
+  dir <instance-id>              Print the worktree path for an instance
 
 Daemon commands:
   daemon install           Register groved as a login LaunchAgent
@@ -115,7 +113,7 @@ Daemon commands:
 
 func cmdProject() {
 	if len(os.Args) < 3 {
-		fmt.Fprintln(os.Stderr, "usage: grove project <create|list|delete>")
+		fmt.Fprintln(os.Stderr, "usage: grove project <create|list|delete|dir>")
 		os.Exit(1)
 	}
 	switch os.Args[2] {
@@ -125,6 +123,8 @@ func cmdProject() {
 		cmdProjectList()
 	case "delete":
 		cmdProjectDelete()
+	case "dir":
+		cmdProjectDir()
 	default:
 		fmt.Fprintf(os.Stderr, "grove: unknown project subcommand %q\n", os.Args[2])
 		os.Exit(1)
@@ -1061,18 +1061,18 @@ func cmdFinish() {
 	io.Copy(os.Stdout, conn)
 }
 
-func cmdMain() {
-	if len(os.Args) < 3 {
-		fmt.Fprintln(os.Stderr, "usage: grove main <project>")
+func cmdProjectDir() {
+	if len(os.Args) < 4 {
+		fmt.Fprintln(os.Stderr, "usage: grove project dir <project|#>")
 		os.Exit(1)
 	}
-	project := resolveProject(os.Args[2])
+	project := resolveProject(os.Args[3])
 	fmt.Println(filepath.Join(rootDir(), "projects", project, "main"))
 }
 
-func cmdWorktree() {
+func cmdDir() {
 	if len(os.Args) < 3 {
-		fmt.Fprintln(os.Stderr, "usage: grove worktree <instance-id>")
+		fmt.Fprintln(os.Stderr, "usage: grove dir <instance-id>")
 		os.Exit(1)
 	}
 	id := os.Args[2]
