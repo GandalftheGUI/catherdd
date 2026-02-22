@@ -776,26 +776,93 @@ func drawWatch(fd int, socketPath string) {
 	var buf strings.Builder
 	buf.WriteString("\033[H\033[2J")
 
-	// ASCII art grove header — centered.
-	artLines := []string{
-		`    /\  /\  /\`,
-		`   /  \/  \/  \   g r o v e`,
-		`  /____________\`,
+	// ASCII art grove header — banner with tree on either side.
+	treeLines1 := []string{
+		`     ccee88oo`,
+		`  C8O8O8Q8PoOb o8oo`,
+		` dOB69QO8PdUOpugoO9bD`,
+		`CgggbU8OU qOp qOdoUOdcb`,
+		`    6OuU  /p u gcoUodpP`,
+		`      \\\//  /douUP`,
+		`        \\\////`,
+		`         |||/\`,
+		`         |||\/`,
+		`         |||||`,
+		`   .....//||||\....`,
 	}
-	maxArtW := 0
-	for _, l := range artLines {
-		if len(l) > maxArtW {
-			maxArtW = len(l)
+	treeLines2 := []string{
+		`        ccee88oo`,
+		`  C8O8O8Q8PoOb o8oo`,
+		` dOB9_GandalftheGUI_O9bD`,
+		`CgggbU8OU qOp qOdoUOdcb`,
+		`    6OuU6 /p IRgcoUodpP`,
+		`      \dou/  /douUP`,
+		`        \\\\///`,
+		`         |||||`,
+		`         |||||`,
+		`         |||||`,
+		`   .....//||||\....`,
+	}
+	bannerLines := []string{
+		"      _,---.                 _,.---._           ,-.-.    ,----. ",
+		"  _.='.'-,  \\  .-.,.---.   ,-.' , -  `.  ,--.-./=/ ,/ ,-.--` , \\",
+		" /==.'-     / /==/  `   \\ /==/_,  ,  - \\/==/, ||=| -||==|-  _.-`",
+		"/==/ -   .-' |==|-, .=., |==|   .=.     \\==\\,  \\ / ,||==|   `.-.",
+		"|==|_   /_,-.|==|   '='  /==|_ : ;=:  - |\\==\\ - ' - /==/_ ,    /",
+		"|==|  , \\_.' )==|- ,   .'|==| , '='     | \\==\\ ,   ||==|    .-' ",
+		"\\==\\-  ,    (|==|_  . ,'. \\==\\ -    ,_ /  |==| -  ,/|==|_  ,`-._",
+		" /==/ _  ,  //==/  /\\ ,  ) '.='. -   .'   \\==\\  _ / /==/ ,     /",
+		" `--`------' `--`-`--`--'    `--`--''      `--`--'  `--`-----`` ",
+	}
+	const treeGap = 2
+	maxTreeW := 0
+	for _, l := range treeLines1 {
+		if len(l) > maxTreeW {
+			maxTreeW = len(l)
 		}
 	}
-	leftPad := (width - maxArtW) / 2
-	if leftPad < 0 {
-		leftPad = 0
+	for _, l := range treeLines2 {
+		if len(l) > maxTreeW {
+			maxTreeW = len(l)
+		}
 	}
-	pad := strings.Repeat(" ", leftPad)
+	maxBannerW := 0
+	for _, l := range bannerLines {
+		if len(l) > maxBannerW {
+			maxBannerW = len(l)
+		}
+	}
+	// 11 rows: tree (11 lines) + banner (9 lines, padded with blank at top and bottom).
+	bannerPadded := make([]string, 11)
+	bannerPadded[0] = ""
+	bannerPadded[10] = ""
+	for i := 0; i < 9; i++ {
+		bannerPadded[1+i] = bannerLines[i]
+	}
+	rowWidth := maxTreeW + treeGap + maxBannerW + treeGap + maxTreeW
+	leftRowPad := (width - rowWidth) / 2
+	if leftRowPad < 0 {
+		leftRowPad = 0
+	}
 	buf.WriteString("\033[32m") // green for the trees
-	for _, l := range artLines {
-		buf.WriteString(pad + l + "\n")
+	for i := 0; i < 11; i++ {
+		leftLine := treeLines1[i]
+		if len(leftLine) < maxTreeW {
+			leftLine = leftLine + strings.Repeat(" ", maxTreeW-len(leftLine))
+		}
+		rightLine := treeLines2[i]
+		if len(rightLine) < maxTreeW {
+			rightLine = rightLine + strings.Repeat(" ", maxTreeW-len(rightLine))
+		}
+		bannerLine := bannerPadded[i]
+		if len(bannerLine) < maxBannerW {
+			bannerLine = bannerLine + strings.Repeat(" ", maxBannerW-len(bannerLine))
+		}
+		row := leftLine + strings.Repeat(" ", treeGap) + bannerLine + strings.Repeat(" ", treeGap) + rightLine
+		if leftRowPad > 0 {
+			buf.WriteString(strings.Repeat(" ", leftRowPad))
+		}
+		buf.WriteString(row + "\n")
 	}
 	buf.WriteString("\033[0m\n")
 
@@ -1048,11 +1115,16 @@ func cmdPrune() {
 		return
 	}
 
-	fmt.Printf("\n%sInstances to drop:%s\n\n", colorBold, colorReset)
+	fmt.Printf("\n%s⚠  Prune%s — the following instance(s) and their worktrees will be removed:\n\n", colorYellow+colorBold, colorReset)
 	for _, inst := range dead {
-		fmt.Printf("  %s%s%s  %s%s%s  %-9s  %s%s%s\n", colorCyan, inst.ID, colorReset, colorDim, inst.Project, colorReset, inst.State, colorDim, inst.WorktreeDir, colorReset)
+		fmt.Printf("  %s%s%s\n", colorBold, inst.ID, colorReset)
+		fmt.Printf("    %sProject:%s   %s%s%s\n", colorDim, colorReset, colorCyan, inst.Project, colorReset)
+		fmt.Printf("    %sWorktree:%s  %s%s%s\n", colorDim, colorReset, colorCyan, inst.WorktreeDir, colorReset)
+		fmt.Printf("    %sBranch:%s    %s%s%s\n", colorDim, colorReset, colorCyan, inst.Branch, colorReset)
+		fmt.Printf("    %sState:%s     %s\n\n", colorDim, colorReset, inst.State)
 	}
-	fmt.Printf("\n%sDrop %d instance(s) and their worktrees?%s [y/N] ", colorBold, len(dead), colorReset)
+	fmt.Printf("  This will drop %d instance(s) and their worktrees.\n\n", len(dead))
+	fmt.Printf("%sContinue?%s [y/N] ", colorBold, colorReset)
 
 	reader := bufio.NewReader(os.Stdin)
 	answer, _ := reader.ReadString('\n')
