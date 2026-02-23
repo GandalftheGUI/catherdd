@@ -1,11 +1,8 @@
 # Grove
 
-Grove is a local supervisor for running multiple AI coding agents in parallel _safely and reproducibly_ on a single machine.
+Grove is a local orchestration system that runs and supervises multiple AI coding agents in isolated Git worktrees and Docker containers, with robust process supervision and PTY streaming.
 
-It manages Git worktrees + Docker containers + PTY sessions so each agent runs in a fully isolated environment with its own branch, dependencies, and state, without manual setup or cleanup.
-
-Grove is not an AI model.
-It is infrastructure and developer UX around existing agent CLIs (e.g. claude, aider).
+Perfect for developers wanting safe parallel agent workflows on a single machine.
 
 > Think: tmux + git worktree + Docker, purpose-built for AI agents.
 
@@ -14,10 +11,6 @@ It is infrastructure and developer UX around existing agent CLIs (e.g. claude, a
 ---
 
 ## At a glance
-
-Grove makes “run multiple AI coding agents in parallel” feel like running parallel CI jobs — **isolated**, **restartable**, and **reproducible**.
-
-Highlights:
 
 - **Isolation model**: “one agent = one worktree + one container” so agents can’t step on each other’s dependencies, services, ports, or working tree.
 - **Supervisor design**: a daemon over a Unix socket with persisted instance metadata, attach/detach UX, log buffering, and a live dashboard.
