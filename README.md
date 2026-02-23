@@ -22,8 +22,8 @@ Running AI coding agents in parallel is hard because they tend to:
 - Leave behind half-configured environments
 - Be painful to stop, restart, or resume
 
-Grove makes isolation and lifecycle management first-class, so parallel agent
-workflows are safe and repeatable on a single machine.
+*Grove makes isolation and lifecycle management first-class, so parallel agent
+workflows are safe and repeatable on a single machine.*
 
 ---
 
@@ -36,7 +36,7 @@ workflows are safe and repeatable on a single machine.
 - **Process supervision** — restartable, attachable agents with durable state
 - **Low ceremony** — one command to start, attach, check, finish, or drop
 
-If you want to go deeper, see [TECHNICAL.md](./docs/TECHNICAL.md)
+*If you want to go deeper, see [TECHNICAL.md](./docs/TECHNICAL.md)*
 
 ---
 
