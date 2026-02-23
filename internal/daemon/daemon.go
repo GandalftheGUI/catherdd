@@ -249,6 +249,13 @@ func (d *Daemon) handleStart(conn net.Conn, req proto.Request) {
 		composeProject = "grove-" + instanceID
 	}
 
+	// Copy host's ~/.claude.json into the container so Claude starts with
+	// existing preferences/auth. This is a copy, not a bind mount, to avoid
+	// file corruption from concurrent writes by host and container Claude.
+	if p.Agent.Command == "claude" || p.Agent.Command == "" {
+		seedClaudeConfig(containerName)
+	}
+
 	// Run start commands inside the container.
 	if err := runStart(p, containerName, setupW); err != nil {
 		stopContainer(containerName, composeProject)
@@ -293,6 +300,7 @@ func (d *Daemon) handleStart(conn net.Conn, req proto.Request) {
 	for k, v := range req.AgentEnv {
 		agentEnv[k] = v
 	}
+	logAgentCredentials(instanceID, agentEnv)
 
 	if err := inst.startAgent(agentCmd, p.Agent.Args, agentEnv); err != nil {
 		stopContainer(containerName, composeProject)
@@ -672,6 +680,7 @@ func (d *Daemon) handleRestart(conn net.Conn, req proto.Request) {
 	for k, v := range req.AgentEnv {
 		agentEnv[k] = v
 	}
+	logAgentCredentials(inst.ID, agentEnv)
 
 	if err := inst.startAgent(agentCmd, p.Agent.Args, agentEnv); err != nil {
 		respond(conn, proto.Response{OK: false, Error: err.Error()})
@@ -781,6 +790,22 @@ func (d *Daemon) loadPersistedInstances() error {
 	}
 
 	return nil
+}
+
+// logAgentCredentials logs which credential keys are present in agentEnv so
+// auth problems can be diagnosed from the daemon log without exposing values.
+func logAgentCredentials(instanceID string, agentEnv map[string]string) {
+	var found []string
+	for _, k := range []string{"CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"} {
+		if agentEnv[k] != "" {
+			found = append(found, k)
+		}
+	}
+	if len(found) > 0 {
+		log.Printf("instance %s: claude credentials present: %s", instanceID, strings.Join(found, ", "))
+	} else {
+		log.Printf("instance %s: WARNING no claude credentials found — agent will show login screen", instanceID)
+	}
 }
 
 // ─── resilientWriter ──────────────────────────────────────────────────────────

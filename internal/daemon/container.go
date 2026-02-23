@@ -2,8 +2,10 @@ package daemon
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -222,31 +224,6 @@ pip install aider-chat 2>/dev/null || pip3 install aider-chat`
 	return nil
 }
 
-// restoreClaudeConfigIfMissing checks whether ~/.claude.json exists and, if not,
-// restores the latest backup from ~/.claude/backups/ so the file can be
-// bind-mounted into the container as /root/.claude.json.
-func restoreClaudeConfigIfMissing(home string, w io.Writer) {
-	configPath := filepath.Join(home, ".claude.json")
-	if _, err := os.Stat(configPath); err == nil {
-		return // already exists
-	}
-	backupsDir := filepath.Join(home, ".claude", "backups")
-	entries, err := os.ReadDir(backupsDir)
-	if err != nil || len(entries) == 0 {
-		return // no backups to restore from
-	}
-	// Backups use timestamp suffixes; the last entry alphabetically is the newest.
-	latest := entries[len(entries)-1]
-	src := filepath.Join(backupsDir, latest.Name())
-	data, err := os.ReadFile(src)
-	if err != nil {
-		return
-	}
-	if err := os.WriteFile(configPath, data, 0o600); err != nil {
-		return
-	}
-	fmt.Fprintf(w, "Restored Claude config from backup: %s\n", latest.Name())
-}
 
 // buildMounts returns all (source, target) mount pairs for the container:
 // auto-detected agent credentials followed by user-configured mounts.
@@ -257,25 +234,12 @@ func buildMounts(p *Project, w io.Writer) [][2]string {
 	home, _ := os.UserHomeDir()
 	var mounts [][2]string
 
-	// For claude: ensure ~/.claude.json exists on the host before mounting.
-	// Claude stores its main config (including auth) at ~/.claude.json, separate
-	// from the ~/.claude/ session directory. If only the directory was backed up,
-	// restore from the latest backup so the bind mount can apply it.
-	if p.Agent.Command == "claude" {
-		restoreClaudeConfigIfMissing(home, w)
-	}
-
 	// Auto-mount credentials for known agents.
-	var credsMounted int
 	for _, pair := range agentCredentialMounts(p.Agent.Command, home) {
 		if _, err := os.Stat(pair[0]); err == nil {
 			fmt.Fprintf(w, "Mounting credentials: %s → %s\n", pair[0], pair[1])
 			mounts = append(mounts, pair)
-			credsMounted++
 		}
-	}
-	if p.Agent.Command == "claude" && credsMounted == 0 {
-		fmt.Fprintf(w, "Warning: no Claude credentials found on host (~/.claude or ~/.claude.json). Agent will show welcome/login.\n")
 	}
 
 	// User-configured extra mounts from grove.yaml.
@@ -293,12 +257,16 @@ func buildMounts(p *Project, w io.Writer) [][2]string {
 }
 
 // agentCredentialMounts returns (source, target) pairs for known agent CLIs.
+//
+// Note: ~/.claude.json is deliberately NOT bind-mounted for Claude because the
+// host's Claude Code and the container's Claude Code both write to it
+// frequently, causing file corruption. Instead, seedClaudeConfig copies a
+// snapshot into the container after creation.
 func agentCredentialMounts(agentCmd, home string) [][2]string {
 	switch agentCmd {
 	case "claude":
 		return [][2]string{
 			{filepath.Join(home, ".claude"), "/root/.claude"},
-			{filepath.Join(home, ".claude.json"), "/root/.claude.json"},
 		}
 	case "aider":
 		return [][2]string{
@@ -306,6 +274,32 @@ func agentCredentialMounts(agentCmd, home string) [][2]string {
 		}
 	}
 	return nil
+}
+
+// seedClaudeConfig copies the host's ~/.claude.json into the container so
+// Claude Code starts with the user's existing preferences and auth state.
+// Unlike a bind mount, this gives the container its own copy that won't
+// corrupt the host file when both write concurrently.
+func seedClaudeConfig(containerName string) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return
+	}
+	src := filepath.Join(home, ".claude.json")
+
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return
+	}
+	if !json.Valid(data) {
+		log.Printf("seedClaudeConfig: %s is not valid JSON, skipping", src)
+		return
+	}
+
+	cmd := exec.Command("docker", "cp", src, containerName+":/root/.claude.json")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		log.Printf("seedClaudeConfig: docker cp failed: %v: %s", err, out)
+	}
 }
 
 // resolveMountPath expands a user-specified mount path to (source, target).

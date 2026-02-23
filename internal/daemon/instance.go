@@ -146,6 +146,14 @@ func (inst *Instance) startAgent(agentCmd string, agentArgs []string, extraEnv m
 	if agentCmd == "claude" || agentCmd == "aider" {
 		dockerArgs = append(dockerArgs, "-u", "root", "-e", "HOME=/root")
 	}
+	// IS_DEMO skips Claude Code's interactive first-run onboarding (theme
+	// picker, trust dialog) which would otherwise appear on every fresh
+	// container.  The only side-effects are cosmetic: the user's email is
+	// hidden from the status bar and bang-prefixed debug commands (!tokens,
+	// !cost, etc.) are suppressed.
+	if agentCmd == "claude" {
+		dockerArgs = append(dockerArgs, "-e", "IS_DEMO=true")
+	}
 	for k, v := range extraEnv {
 		dockerArgs = append(dockerArgs, "-e", k+"="+v)
 	}

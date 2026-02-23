@@ -71,6 +71,8 @@ func main() {
 		cmdDir()
 	case "daemon":
 		cmdDaemon()
+	case "token":
+		cmdToken()
 	default:
 		fmt.Fprintf(os.Stderr, "grove: unknown command %q\n", os.Args[1])
 		usage()
@@ -108,7 +110,10 @@ Daemon commands:
   daemon install           Register groved as a login LaunchAgent
   daemon uninstall         Remove the LaunchAgent
   daemon status            Show whether the LaunchAgent is installed and running
-  daemon logs [-f] [-n N]  Print daemon log (-f follow, -n tail lines)`)
+  daemon logs [-f] [-n N]  Print daemon log (-f follow, -n tail lines)
+
+Credential commands:
+  token                    Set or replace the CLAUDE_CODE_OAUTH_TOKEN in ~/.grove/env`)
 }
 
 // ─── Subcommand implementations ───────────────────────────────────────────────
@@ -1410,6 +1415,63 @@ func cmdPrune() {
 		fmt.Printf("%s✓  Dropped%s %s%s%s\n", colorGreen+colorBold, colorReset, colorCyan, inst.ID, colorReset)
 	}
 	fmt.Println()
+}
+
+// cmdToken sets or replaces the CLAUDE_CODE_OAUTH_TOKEN in ~/.grove/env.
+// It replaces any existing entry rather than appending, so repeated calls
+// don't accumulate stale tokens.
+func cmdToken() {
+	root := rootDir()
+	envPath := filepath.Join(root, "env")
+
+	envFile := loadCLIEnvFile(root)
+	if envFile["CLAUDE_CODE_OAUTH_TOKEN"] != "" {
+		fmt.Printf("\n%sCurrent token:%s CLAUDE_CODE_OAUTH_TOKEN is set\n\n", colorBold, colorReset)
+	} else {
+		fmt.Printf("\n%sNo token currently set.%s\n\n", colorDim, colorReset)
+	}
+
+	fmt.Printf("Generate a new token by running:\n\n")
+	fmt.Printf("    %sclaude setup-token%s\n\n", colorCyan, colorReset)
+	fmt.Printf("%sNew token%s (or Enter to cancel): ", colorBold, colorReset)
+
+	scanner := bufio.NewScanner(os.Stdin)
+	if !scanner.Scan() {
+		return
+	}
+	token := strings.TrimSpace(scanner.Text())
+	if token == "" {
+		fmt.Printf("%scancelled%s\n", colorDim, colorReset)
+		return
+	}
+
+	// Re-write the env file, stripping any existing CLAUDE_CODE_OAUTH_TOKEN
+	// lines so we don't accumulate duplicates.
+	existing, _ := os.ReadFile(envPath)
+	var kept []string
+	for _, line := range strings.Split(string(existing), "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "CLAUDE_CODE_OAUTH_TOKEN=") {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	// Drop trailing blank lines before appending the new entry.
+	for len(kept) > 0 && strings.TrimSpace(kept[len(kept)-1]) == "" {
+		kept = kept[:len(kept)-1]
+	}
+	kept = append(kept, "CLAUDE_CODE_OAUTH_TOKEN="+token)
+	content := strings.Join(kept, "\n") + "\n"
+
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		fmt.Fprintf(os.Stderr, "grove: %v\n", err)
+		os.Exit(1)
+	}
+	if err := os.WriteFile(envPath, []byte(content), 0o600); err != nil {
+		fmt.Fprintf(os.Stderr, "grove: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("\n%s✓  Token saved%s %s%s%s\n\n", colorGreen+colorBold, colorReset, colorDim, envPath, colorReset)
 }
 
 // ─── Daemon install/uninstall/status ─────────────────────────────────────────
