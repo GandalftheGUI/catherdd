@@ -23,7 +23,7 @@ Highlights:
 - **Supervisor design**: a daemon over a Unix socket with persisted instance metadata, attach/detach UX, log buffering, and a live dashboard.
 - **Reproducibility**: project-owned `grove.yaml` defines container image, setup, checks, and finish steps and is committed with the repo.
 
-If you want to go deeper, see `docs/TECHNICAL.md`.
+If you want to go deeper, see [TECHNICAL.md](./docs/TECHNICAL.md)
 
 ---
 
@@ -149,7 +149,7 @@ Full details (and alternatives like API keys) are in `docs/TECHNICAL.md`.
 
 ## Docs
 
-- `docs/TECHNICAL.md` — architecture, `grove.yaml` reference, filesystem layout, full CLI reference, daemon management, lifecycle details
+- [TECHNICAL.md](./docs/TECHNICAL.md) — architecture, `grove.yaml` reference, filesystem layout, full CLI reference, daemon management, lifecycle details
 
 ---
 
