@@ -17,7 +17,7 @@ import (
 	"path/filepath"
 	"syscall"
 
-	"github.com/ianremillard/grove/internal/daemon"
+	"github.com/gandalfthegui/grove/internal/daemon"
 )
 
 func main() {

@@ -42,6 +42,16 @@ const (
 	StateChecking = "CHECKING"
 )
 
+// IsTerminal reports whether state is a terminal (non-restartable) state:
+// EXITED, CRASHED, KILLED, or FINISHED.
+func IsTerminal(state string) bool {
+	switch state {
+	case StateExited, StateCrashed, StateKilled, StateFinished:
+		return true
+	}
+	return false
+}
+
 // Request is the JSON payload sent from grove to groved.
 type Request struct {
 	Type       string `json:"type"`

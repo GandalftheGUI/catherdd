@@ -95,8 +95,8 @@ start:
 # ── Agent ──────────────────────────────────────────────────────────────────────
 # The AI coding agent. Runs inside the container via `docker exec -it`.
 # Grove auto-installs known agents if not present in the image:
-#   claude → npm install -g @anthropic-ai/claude-code  (requires node in image)
-#   aider  → pip install aider-chat                    (requires python in image)
+#   claude → curl -fsSL https://claude.ai/install.sh | bash  (native binary, no Node required)
+#   aider  → pip install aider-chat                          (requires python in image)
 # For other agents, add the install command to start: above.
 agent:
   command: claude

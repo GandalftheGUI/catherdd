@@ -1,7 +1,6 @@
 package daemon
 
 import (
-	"bufio"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -224,7 +223,6 @@ pip install aider-chat 2>/dev/null || pip3 install aider-chat`
 	return nil
 }
 
-
 // buildMounts returns all (source, target) mount pairs for the container:
 // auto-detected agent credentials followed by user-configured mounts.
 // Each applied mount is logged to w. User-configured paths that don't exist
@@ -314,31 +312,5 @@ func resolveMountPath(m, home string) (source, target string) {
 		return filepath.Join(home, rel), "/root/" + rel
 	}
 	return m, m
-}
-
-// loadEnvFile reads a dotenv-style file at <rootDir>/env and returns the
-// key-value pairs. Lines starting with # and blank lines are ignored.
-// Returns an empty map (not an error) if the file does not exist.
-func loadEnvFile(rootDir string) map[string]string {
-	env := map[string]string{}
-	f, err := os.Open(filepath.Join(rootDir, "env"))
-	if err != nil {
-		return env
-	}
-	defer f.Close()
-
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		k, v, ok := strings.Cut(line, "=")
-		if !ok {
-			continue
-		}
-		env[strings.TrimSpace(k)] = strings.TrimSpace(v)
-	}
-	return env
 }
 

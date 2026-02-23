@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ianremillard/grove/internal/proto"
+	"github.com/gandalfthegui/grove/internal/proto"
 	"github.com/stretchr/testify/assert"
 )
 

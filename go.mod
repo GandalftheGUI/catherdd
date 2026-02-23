@@ -1,4 +1,4 @@
-module github.com/ianremillard/grove
+module github.com/gandalfthegui/grove
 
 go 1.22
 

@@ -38,7 +38,7 @@ import (
 	"time"
 
 	"github.com/creack/pty"
-	"github.com/ianremillard/grove/internal/proto"
+	"github.com/gandalfthegui/grove/internal/proto"
 )
 
 const (
@@ -176,6 +176,8 @@ func (inst *Instance) startAgent(agentCmd string, agentArgs []string, extraEnv m
 	inst.pid = cmd.Process.Pid
 	inst.state = proto.StateRunning
 	inst.processDone = make(chan struct{})
+	inst.logBuf = inst.logBuf[:0]     // clear stale output from prior runs
+	inst.lastOutputTime = time.Time{} // reset idle timer
 	inst.mu.Unlock()
 
 	// Background goroutine: drain PTY master and buffer/forward output.
