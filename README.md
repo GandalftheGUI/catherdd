@@ -119,13 +119,6 @@ Token (or Enter to skip):
 
 The token is saved to `~/.grove/env` and used for all future sessions.
 
-**Manual setup** (if you prefer):
-
-```bash
-claude setup-token          # generates a token valid for 1 year
-echo "CLAUDE_CODE_OAUTH_TOKEN=<paste-token>" >> ~/.grove/env
-```
-
 **Alternative — API key auth:**
 
 ```bash
@@ -133,7 +126,7 @@ echo "ANTHROPIC_API_KEY=sk-ant-api03-..." >> ~/.grove/env
 ```
 
 The `~/.grove/env` file uses dotenv format (`KEY=VALUE`, one per line, `#`
-comments). It is created with `0600` permissions (owner-only read/write).
+comments).
 
 ---
 
@@ -286,36 +279,6 @@ grove daemon status     Show LaunchAgent status (macOS only)
 grove daemon logs [-f] [-n N]
                          Print daemon log (-f follow, -n tail lines)
 ```
-
----
-
-## Instance states
-
-| State      | Meaning                                              |
-|------------|------------------------------------------------------|
-| `RUNNING`  | Agent process is alive                               |
-| `WAITING`  | Agent is idle (no PTY output for >2 s)               |
-| `ATTACHED` | A grove client is currently attached                 |
-| `EXITED`   | Agent exited cleanly (code 0)                        |
-| `CRASHED`  | Agent exited with a non-zero code                    |
-| `KILLED`   | Agent was stopped with `grove stop`                  |
-| `FINISHED` | Instance completed via `grove finish`                |
-
-State transitions:
-
-```
-RUNNING/WAITING ←→ ATTACHED   (attach / detach)
-RUNNING/WAITING/ATTACHED → EXITED    (agent exits 0)
-RUNNING/WAITING/ATTACHED → CRASHED   (agent exits non-zero, or daemon was killed)
-RUNNING/WAITING/ATTACHED → KILLED    (grove stop)
-any live state           → FINISHED  (grove finish)
-EXITED/CRASHED/KILLED/FINISHED → RUNNING  (grove restart)
-```
-
-Instances in any terminal state (`EXITED`, `CRASHED`, `KILLED`, `FINISHED`) are
-still visible in `grove list` and their worktrees are intact on disk. Use
-`grove drop <id>` to permanently delete a worktree, stop its container, and
-remove its record.
 
 ---
 
