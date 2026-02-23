@@ -1,12 +1,38 @@
 # Grove
 
-A local daemon + CLI that supervises AI coding agents running in isolated Git
-worktrees and Docker containers on a single machine.
+Grove is a local supervisor for running multiple AI coding agents in parallel, safely and reproducibly, on a single machine.
 
-groved is **not** an AI model. It is a process supervisor and developer UX
-layer around existing agent CLIs (e.g. `claude`, `aider`).
+It manages Git worktrees + Docker containers + PTY sessions so each agent runs in a fully isolated environment with its own branch, dependencies, and state—without manual setup or cleanup.
+
+Grove is not an AI model.
+It is infrastructure and developer UX around existing agent CLIs (e.g. claude, aider).
+
+> Think: tmux + git worktree + Docker, purpose-built for AI agents.
 
 <img width="916" height="469" alt="Screenshot 2026-02-21 at 11 11 27 PM" src="https://github.com/user-attachments/assets/9ffbd86b-598d-4ba2-abc6-63d858b093de" />
+
+---
+
+## Why Grove exists
+
+Running AI coding agents in parallel is hard because they tend to:
+
+- Share global state (ports, databases, node_modules, env vars)
+- Mutate the same working tree
+- Leave behind half-configured environments
+- Be painful to stop, restart, or resume
+
+Grove solves this by making **“one agent = one worktree + one container”** a first-class abstraction.
+
+---
+
+## What Grove gives you
+
+- **True isolation**: Each agent runs in its own Docker container with its own Git worktree. No shared databases, ports, or dependencies.
+- **Fast iteration**: Restarting an agent reuses the existing container and worktree—no re-install or re-clone.
+- **Deterministic setup**: Project-owned grove.yaml defines the container image, setup commands, agent, checks, and finish steps.
+- **Process supervision**: Agents are PTY-attached, restartable, and stateful across daemon restarts.
+- **Low ceremony**: One command to start, attach, detach, check, finish, or permanently drop an instance.
 
 ---
 
