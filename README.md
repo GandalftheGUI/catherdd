@@ -1,8 +1,11 @@
 # Grove
 
-Grove is a local orchestration system that runs and supervises multiple AI coding agents in isolated Git worktrees and Docker containers, with robust process supervision and PTY streaming.
+Grove is a local orchestration system for running and supervising multiple AI
+coding agents in parallel, with strong isolation and a fast, debuggable
+developer experience.
 
-*Perfect for developers wanting safe parallel agent workflows on a single machine.*
+Each agent runs in its own Git worktree and Docker container, preventing
+conflicts across dependencies, services, ports, and working state.
 
 > Think: tmux + git worktree + Docker, purpose-built for AI agents.
 
@@ -14,22 +17,24 @@ Grove is a local orchestration system that runs and supervises multiple AI codin
 
 Running AI coding agents in parallel is hard because they tend to:
 
-- Share global state (ports, databases, node_modules, env vars)
-- Mutate the same working tree
-- Leave behind half-configured environments
-- Be painful to stop, restart, or resume
+• Share global state (ports, databases, node_modules, env vars)
+• Mutate the same working tree
+• Leave behind half-configured environments
+• Be painful to stop, restart, or resume
 
-Grove solves this by making **“one agent = one worktree + one container”** a first-class abstraction.
+Grove makes isolation and lifecycle management first-class, so parallel agent
+workflows are safe and repeatable on a single machine.
 
 ---
 
 ## What Grove gives you
 
-- **True isolation**:  “one agent = one worktree + one container” so agents can’t step on each other’s dependencies, services, ports, or working tree.
-- **Fast iteration**: Restarting an agent reuses the existing container and worktree—no re-install or re-clone.
-- **Deterministic setup**: Project-owned grove.yaml defines the container image, setup commands, agent, checks, and finish steps.
-- **Process supervision**: Agents are PTY-attached, restartable, and stateful across daemon restarts.
-- **Low ceremony**: One command to start, attach, detach, check, finish, or permanently drop an instance.
+• True isolation — agents run in dedicated worktrees and containers
+• Fast iteration — restarts reuse the existing container and worktree
+• Deterministic setup — project-owned grove.yaml defines containers, setup,
+  checks, and finish steps
+• Process supervision — restartable, attachable agents with durable state
+• Low ceremony — one command to start, attach, check, finish, or drop
 
 If you want to go deeper, see [TECHNICAL.md](./docs/TECHNICAL.md)
 
