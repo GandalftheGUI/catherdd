@@ -143,8 +143,11 @@ func (inst *Instance) startAgent(agentCmd string, agentArgs []string, extraEnv m
 	}
 	// Run agent as root with HOME=/root so it sees config mounted at
 	// /root/.claude and /root/.claude.json (many images use a non-root default user).
+	// Include /root/.local/bin in PATH so claude can find itself at its native
+	// install location without printing a "not in your PATH" warning.
 	if agentCmd == "claude" || agentCmd == "aider" {
-		dockerArgs = append(dockerArgs, "-u", "root", "-e", "HOME=/root")
+		dockerArgs = append(dockerArgs, "-u", "root", "-e", "HOME=/root",
+			"-e", "PATH=/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
 	}
 	// IS_DEMO skips Claude Code's interactive first-run onboarding (theme
 	// picker, trust dialog) which would otherwise appear on every fresh
