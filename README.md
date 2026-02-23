@@ -94,7 +94,7 @@ grove drop 2
 
 ---
 
-## Quick start (engineers)
+# Quick start
 
 ### Requirements
 
